@@ -11,6 +11,8 @@ def provider_routes(merchant, method, environment=None):
     )
     if configs:
         return [(config.adapter_name, config) for config in configs]
+    if env == "live":
+        return []
     if method == PaymentAttempt.METHOD_CARD:
         return [(merchant.card_provider, None)]
     return [(merchant.crypto_provider, None)]

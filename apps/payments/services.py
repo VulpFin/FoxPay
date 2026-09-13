@@ -194,6 +194,10 @@ def create_payment_intent(request, merchant, payload, idempotency_key=""):
         raise APIError("currency must be a three-letter ISO currency code.")
 
     payment_methods = clean_payment_methods(payload.get("payment_methods"))
+    if not payload.get("payment_methods"):
+        payment_methods = [method for method in payment_methods if provider_routes(merchant, method)]
+        if not payment_methods:
+            raise APIError("No payment providers are available.", code="no_available_providers")
     capture_strategy = payload.get("capture_strategy", PaymentIntent.CAPTURE_AUTOMATIC)
     if capture_strategy != PaymentIntent.CAPTURE_AUTOMATIC:
         raise APIError(

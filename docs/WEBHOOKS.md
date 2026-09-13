@@ -26,6 +26,19 @@ Store the endpoint signing secret as the provider credential named
 `webhook_secret`. The `configure_stripe_provider` command can do this from
 `STRIPE_WEBHOOK_SECRET`.
 
+NOWPayments IPNs use `x-nowpayments-sig`, an HMAC-SHA512 signature of the JSON
+body with recursively sorted keys. Enter this callback URL in the NOWPayments
+dashboard and use the same URL when creating invoices:
+
+```text
+https://foxpay.fyi/api/v1/webhooks/nowpayments/vulpfin/nowpayments-primary/
+```
+
+The account-generated IPN secret must be stored as the encrypted provider
+credential `ipn_secret`. Until it is configured, this endpoint returns 503 and
+does not accept notifications. The `finished` status settles a matching Fox Pay
+invoice; `partially_paid` and intermediate states do not.
+
 ## Outgoing Merchant Webhooks
 
 Merchant webhook events are stored in `MerchantWebhookEvent`.

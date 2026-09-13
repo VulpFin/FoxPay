@@ -67,12 +67,36 @@ Supported incoming Stripe events:
 Fox Pay verifies the `Stripe-Signature` header against the encrypted
 `webhook_secret` credential before normalizing the event.
 
+## NOWPayments Hosted Crypto
+
+Fox Pay creates a NOWPayments hosted invoice with a unique `order_id` for each
+crypto attempt. Its IPN callback is signed with the account's IPN secret. Only
+the `finished` status can settle a Fox Pay payment, after the callback matches
+the attempt and USD invoice amount. `partially_paid` is not settled.
+
+Configure the provider after creating a NOWPayments API key and IPN secret:
+
+```powershell
+python manage.py configure_nowpayments_provider `
+  --merchant vulpfin `
+  --provider nowpayments-primary `
+  --environment live `
+  --activate
+```
+
+The command reads `NOWPAYMENTS_API_KEY` and `NOWPAYMENTS_IPN_SECRET` from the
+environment and stores them encrypted. Omit `--activate` to register the IPN
+URL before credentials are available. Only USD-priced invoices are currently
+supported by this adapter; NOWPayments can present a selected crypto asset via
+the optional `--pay-currency` setting.
+
 ## Current Adapters
 
 - `mock`: local card/debit sandbox checkout.
 - `stripe`: creates Stripe-hosted Checkout Sessions for card and debit card payment.
 - `hosted`: redirects to a configured hosted card checkout URL.
 - `manual`: non-custodial crypto invoice to merchant wallet addresses.
+- `nowpayments`: creates hosted crypto invoices and verifies signed IPNs.
 
 ## Current Routing
 
@@ -81,4 +105,4 @@ Routing is deterministic:
 1. Active configs matching merchant, environment, and method.
 2. Sort by priority.
 3. Create payment options for every matching provider.
-4. Fall back to merchant-level legacy fields if no configs exist.
+4. In test mode only, fall back to merchant-level legacy fields if no configs exist.

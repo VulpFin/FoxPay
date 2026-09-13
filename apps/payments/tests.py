@@ -9,6 +9,7 @@ from django.core.management import call_command
 from django.test import TestCase, override_settings
 from django.urls import reverse
 
+from .adapters.nowpayments import canonical_ipn
 from .ledger import transaction_balances
 from .services import record_webhook
 from .models import (
@@ -330,6 +331,143 @@ class PaymentIntentAPITests(TestCase):
         self.assertEqual(attempt.status, PaymentAttempt.STATUS_SUCCEEDED)
         self.assertEqual(attempt.provider_reference, "cs_test_123")
         self.assertEqual(ProviderEvent.objects.count(), 1)
+
+    @patch("apps.payments.adapters.nowpayments.create_invoice_request")
+    def test_nowpayments_hosted_invoice_requires_signed_matching_finished_ipn(self, create_invoice):
+        self.assertEqual(canonical_ipn({"z": 1, "a": {"b": 2, "a": 3}}), b'{"a":{"a":3,"b":2},"z":1}')
+        create_invoice.return_value = {
+            "id": "123456",
+            "invoice_url": "https://nowpayments.io/payment/?iid=123456",
+        }
+        config = ProviderConfig.objects.create(
+            merchant=self.merchant,
+            kind=ProviderConfig.KIND_CRYPTO,
+            provider="nowpayments-primary",
+            adapter="nowpayments",
+            settings={"pay_currency": "btc"},
+        )
+        for name, value in (("api_key", "np_test_key"), ("ipn_secret", "np_test_secret")):
+            credential = ProviderCredential(provider_config=config, name=name)
+            credential.set_secret(value)
+            credential.save()
+
+        response = self.client.post(
+            reverse("payments:payment_intents"),
+            data=json.dumps({"amount": 2500, "currency": "USD", "payment_methods": ["crypto"]}),
+            content_type="application/json",
+            HTTP_X_FOXPAY_KEY=self.raw_key,
+        )
+        self.assertEqual(response.status_code, 201)
+        attempt = PaymentAttempt.objects.get(intent__public_id=response.json()["id"])
+        self.assertEqual(attempt.checkout_url, create_invoice.return_value["invoice_url"])
+        request_payload = create_invoice.call_args.args[2]
+        self.assertEqual(request_payload["price_amount"], 25)
+        self.assertEqual(request_payload["pay_currency"], "btc")
+        self.assertEqual(request_payload["ipn_callback_url"], "http://testserver/api/v1/webhooks/nowpayments/vulpfin/nowpayments-primary/")
+
+        ipn_url = reverse("payments:nowpayments_ipn", args=["vulpfin", "nowpayments-primary"])
+        payload = {
+            "payment_id": 998877,
+            "payment_status": "partially_paid",
+            "order_id": request_payload["order_id"],
+            "price_amount": 25,
+            "price_currency": "usd",
+            "pay_amount": 0.001,
+            "actually_paid": 0.0005,
+        }
+
+        def send_ipn(signature="valid"):
+            digest = hmac.new(b"np_test_secret", canonical_ipn(payload), hashlib.sha512).hexdigest()
+            return self.client.post(
+                ipn_url,
+                data=json.dumps(payload),
+                content_type="application/json",
+                HTTP_X_NOWPAYMENTS_SIG=digest if signature == "valid" else "invalid",
+            )
+
+        self.assertEqual(send_ipn("invalid").status_code, 401)
+        self.assertEqual(send_ipn().status_code, 200)
+        attempt.intent.refresh_from_db()
+        self.assertNotEqual(attempt.intent.status, PaymentIntent.STATUS_SUCCEEDED)
+
+        payload["payment_status"] = "confirmed"
+        payload["actually_paid"] = 0.001
+        self.assertEqual(send_ipn().status_code, 200)
+        attempt.intent.refresh_from_db()
+        self.assertNotEqual(attempt.intent.status, PaymentIntent.STATUS_SUCCEEDED)
+
+        payload["payment_status"] = "finished"
+        payload["actually_paid"] = 0.0005
+        self.assertEqual(send_ipn().status_code, 200)
+        attempt.intent.refresh_from_db()
+        self.assertNotEqual(attempt.intent.status, PaymentIntent.STATUS_SUCCEEDED)
+
+        payload["actually_paid"] = 0.001
+        payload["price_amount"] = 24
+        self.assertEqual(send_ipn().status_code, 422)
+        payload["price_amount"] = 25
+        self.assertEqual(send_ipn().status_code, 200)
+        self.assertEqual(send_ipn().status_code, 200)
+        attempt.intent.refresh_from_db()
+        attempt.refresh_from_db()
+        self.assertEqual(attempt.intent.status, PaymentIntent.STATUS_SUCCEEDED)
+        self.assertEqual(attempt.status, PaymentAttempt.STATUS_SUCCEEDED)
+        self.assertEqual(LedgerTransaction.objects.filter(payment_intent=attempt.intent, transaction_type="payment_succeeded").count(), 1)
+
+    @override_settings(FOXPAY_ENV="live")
+    def test_live_crypto_does_not_fall_back_to_unverified_manual_wallet(self):
+        response = self.client.post(
+            reverse("payments:payment_intents"),
+            data=json.dumps({"amount": 2500, "currency": "USD", "payment_methods": ["crypto"]}),
+            content_type="application/json",
+            HTTP_X_FOXPAY_KEY=self.raw_key,
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("No available crypto providers", response.json()["error"]["message"])
+
+    @override_settings(FOXPAY_ENV="live")
+    @patch("apps.payments.adapters.stripe_checkout.stripe_module", return_value=FakeStripe)
+    def test_live_default_checkout_uses_available_card_route(self, _stripe_module):
+        config = ProviderConfig.objects.create(
+            merchant=self.merchant,
+            environment="live",
+            kind=ProviderConfig.KIND_CARD,
+            provider="stripe-primary",
+            adapter="stripe",
+        )
+        credential = ProviderCredential(provider_config=config, name="secret_key")
+        credential.set_secret("sk_live_example")
+        credential.save()
+
+        response = self.client.post(
+            reverse("payments:payment_intents"),
+            data=json.dumps({"amount": 2500, "currency": "USD"}),
+            content_type="application/json",
+            HTTP_X_FOXPAY_KEY=self.raw_key,
+        )
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual([option["provider"] for option in response.json()["payment_options"]], ["stripe-primary"])
+
+    @override_settings(FOXPAY_ENV="live")
+    def test_nowpayments_ipn_rejects_callbacks_until_secret_is_configured(self):
+        call_command(
+            "configure_nowpayments_provider",
+            merchant="vulpfin",
+            provider="nowpayments-primary",
+            environment="live",
+            stdout=StringIO(),
+        )
+        config = ProviderConfig.objects.get(provider="nowpayments-primary")
+        self.assertFalse(config.is_active)
+
+        response = self.client.post(
+            reverse("payments:nowpayments_ipn", args=["vulpfin", "nowpayments-primary"]),
+            data="{}",
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.json()["error"]["code"], "provider_not_configured")
 
     def test_rejects_missing_api_key(self):
         response = self.client.post(

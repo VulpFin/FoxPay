@@ -14,6 +14,7 @@ urlpatterns = [
     path("api/v1/webhooks/crypto/<str:provider>/", views.crypto_webhook, name="crypto_webhook"),
     path("api/v1/webhooks/stripe/", views.stripe_webhook, name="stripe_webhook"),
     path("api/v1/webhooks/stripe/<str:provider>/", views.stripe_webhook, name="stripe_webhook_provider"),
+    path("api/v1/webhooks/nowpayments/<slug:merchant_slug>/<str:provider>/", views.nowpayments_ipn, name="nowpayments_ipn"),
     path("pay/<str:client_secret>/", views.foxpay_checkout, name="foxpay_checkout"),
     path("checkout/card/<int:attempt_id>/<str:client_secret>/", views.mock_card_checkout, name="mock_card_checkout_attempt"),
     path("checkout/card/<str:client_secret>/", views.mock_card_checkout, name="mock_card_checkout"),

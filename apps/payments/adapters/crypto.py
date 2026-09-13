@@ -5,6 +5,7 @@ from django.utils import timezone
 
 from apps.payments.models import CryptoInvoice, PaymentAttempt
 from .base import Capability, PaymentProviderAdapter
+from .nowpayments import NowPaymentsAdapter
 
 
 class ManualCryptoAdapter(PaymentProviderAdapter):
@@ -52,4 +53,6 @@ class ManualCryptoAdapter(PaymentProviderAdapter):
 def get_crypto_adapter(provider, provider_config=None):
     if provider == "manual":
         return ManualCryptoAdapter(provider_config)
+    if provider == "nowpayments":
+        return NowPaymentsAdapter(provider_config)
     raise ValueError(f"Unsupported crypto provider: {provider}")

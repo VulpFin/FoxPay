@@ -12,9 +12,10 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_http_methods, require_POST
 
 from .adapters.stripe_checkout import construct_stripe_event, normalize_stripe_event
+from .adapters.nowpayments import ipn_attempt, normalize_ipn, provider_secret, validate_ipn_amount, verify_ipn
 from .events import emit_event
 from .ledger import record_payment_success
-from .models import PaymentAttempt, PaymentIntent
+from .models import PaymentAttempt, PaymentIntent, ProviderConfig
 from .services import (
     APIError,
     authenticate_merchant,
@@ -187,6 +188,46 @@ def stripe_webhook(request, provider="stripe"):
         return error_response(str(exc), 401, request_id=getattr(request, "request_id", ""), type="authentication_error", code="invalid_signature")
 
 
+@csrf_exempt
+@require_POST
+def nowpayments_ipn(request, merchant_slug, provider):
+    config = ProviderConfig.objects.filter(
+        merchant__slug=merchant_slug,
+        environment=settings.FOXPAY_ENV,
+        kind=ProviderConfig.KIND_CRYPTO,
+        adapter="nowpayments",
+        provider=provider,
+    ).first()
+    if not config:
+        return error_response("NOWPayments provider not found.", 404, request_id=getattr(request, "request_id", ""), code="provider_not_found")
+    secret = provider_secret(config, "ipn_secret")
+    if not secret:
+        return error_response("NOWPayments IPN secret is not configured.", 503, request_id=getattr(request, "request_id", ""), code="provider_not_configured")
+    try:
+        payload = parse_json(request)
+    except APIError as exc:
+        return error_response(exc.message, exc.status, request_id=getattr(request, "request_id", ""), code=exc.code)
+    if not isinstance(payload, dict) or not verify_ipn(payload, request.headers.get("X-Nowpayments-Sig", ""), secret):
+        return error_response("Invalid NOWPayments IPN signature.", 401, request_id=getattr(request, "request_id", ""), type="authentication_error", code="invalid_signature")
+    attempt = ipn_attempt(config, payload)
+    if not attempt:
+        return error_response("NOWPayments invoice not found.", 404, request_id=getattr(request, "request_id", ""), code="invoice_not_found")
+    if not payload.get("payment_id") or not validate_ipn_amount(attempt, payload):
+        return error_response("NOWPayments payment details do not match the invoice.", 422, request_id=getattr(request, "request_id", ""), code="invoice_mismatch")
+    try:
+        delivery = record_webhook(provider, normalize_ipn(attempt, payload))
+    except APIError as exc:
+        return error_response(exc.message, exc.status, request_id=getattr(request, "request_id", ""), code=exc.code)
+    attempt.refresh_from_db()
+    attempt.provider_status = str(payload.get("payment_status", ""))[:80]
+    attempt.provider_response_metadata = {
+        **attempt.provider_response_metadata,
+        "nowpayments_payment_id": str(payload["payment_id"]),
+    }
+    attempt.save(update_fields=["provider_status", "provider_response_metadata", "updated_at"])
+    return JsonResponse({"received": True, "processed": delivery.processed})
+
+
 @staff_member_required
 def dashboard(request):
     intents = PaymentIntent.objects.select_related("merchant").prefetch_related("attempts").order_by("-created_at")[:50]
@@ -222,6 +263,9 @@ def openapi(request):
                 },
                 "/api/v1/webhooks/stripe/{provider}/": {
                     "post": {"summary": "Receive Stripe Checkout webhook events"}
+                },
+                "/api/v1/webhooks/nowpayments/{merchant_slug}/{provider}/": {
+                    "post": {"summary": "Receive signed NOWPayments IPN events"}
                 },
             },
         }

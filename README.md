@@ -101,6 +101,7 @@ Hosted card provider config example:
 Crypto fallback settings:
 
 - `FOXPAY_CRYPTO_PROVIDER=manual` creates a crypto invoice using merchant wallet addresses configured in Admin.
+- `nowpayments` creates a hosted crypto invoice when a configured NOWPayments provider is active. Its IPN URL is `https://foxpay.fyi/api/v1/webhooks/nowpayments/vulpfin/nowpayments-primary/`.
 - Webhooks can update payment intents after settlement confirmation.
 
 Manual crypto provider config example:
