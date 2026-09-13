@@ -17,12 +17,62 @@ from .models import (
     LedgerTransaction,
     Merchant,
     MerchantWebhookEndpoint,
+    PaymentAttempt,
     PaymentIntent,
     ProviderConfig,
     ProviderCredential,
     ProviderEvent,
     Refund,
 )
+
+
+class FakeStripeSession:
+    def __init__(self, **kwargs):
+        self._data = kwargs
+
+    def __getattr__(self, name):
+        try:
+            return self._data[name]
+        except KeyError as exc:
+            raise AttributeError(name) from exc
+
+    def to_dict_recursive(self):
+        return dict(self._data)
+
+
+class FakeStripeCheckoutSession:
+    last_kwargs = None
+
+    @classmethod
+    def create(cls, **kwargs):
+        cls.last_kwargs = kwargs
+        return FakeStripeSession(
+            id="cs_test_123",
+            url="https://checkout.stripe.com/c/pay/cs_test_123",
+            status="open",
+            payment_status="unpaid",
+            payment_intent="pi_test_123",
+            livemode=False,
+            mode="payment",
+            expires_at=1893456000,
+        )
+
+
+class FakeStripeWebhook:
+    event = None
+
+    @classmethod
+    def construct_event(cls, payload, sig_header, secret):
+        if sig_header != "valid-signature" or secret != "whsec_test":
+            raise ValueError("bad signature")
+        return cls.event
+
+
+class FakeStripe:
+    class checkout:
+        Session = FakeStripeCheckoutSession
+
+    Webhook = FakeStripeWebhook
 
 
 class PaymentIntentAPITests(TestCase):
@@ -174,6 +224,109 @@ class PaymentIntentAPITests(TestCase):
         self.assertEqual([option["provider"] for option in options], ["card-primary", "card-secondary", "crypto-primary", "crypto-secondary"])
         self.assertEqual(options[2]["crypto_invoice"]["address"], "bc1qprimary")
         self.assertEqual(options[3]["crypto_invoice"]["address"], "bc1qsecondary")
+
+    @patch("apps.payments.adapters.stripe_checkout.stripe_module", return_value=FakeStripe)
+    def test_stripe_checkout_provider_creates_hosted_session(self, _stripe_module):
+        config = ProviderConfig.objects.create(
+            merchant=self.merchant,
+            kind=ProviderConfig.KIND_CARD,
+            provider="stripe-primary",
+            adapter="stripe",
+            priority=10,
+            settings={"payment_method_types": ["card"]},
+        )
+        credential = ProviderCredential(provider_config=config, name="secret_key")
+        credential.set_secret("sk_test_example")
+        credential.save()
+
+        response = self.client.post(
+            reverse("payments:payment_intents"),
+            data=json.dumps(
+                {
+                    "amount": 4200,
+                    "currency": "USD",
+                    "description": "Stripe test checkout",
+                    "payment_methods": ["card"],
+                    "success_url": "https://merchant.example/success",
+                    "cancel_url": "https://merchant.example/cancel",
+                    "customer": {"external_id": "cust_2001", "email": "buyer@example.com"},
+                }
+            ),
+            content_type="application/json",
+            HTTP_X_FOXPAY_KEY=self.raw_key,
+        )
+
+        self.assertEqual(response.status_code, 201)
+        option = response.json()["payment_options"][0]
+        self.assertEqual(option["provider"], "stripe-primary")
+        self.assertEqual(option["checkout_url"], "https://checkout.stripe.com/c/pay/cs_test_123")
+        self.assertEqual(FakeStripeCheckoutSession.last_kwargs["mode"], "payment")
+        self.assertEqual(FakeStripeCheckoutSession.last_kwargs["payment_method_types"], ["card"])
+        self.assertEqual(FakeStripeCheckoutSession.last_kwargs["line_items"][0]["price_data"]["unit_amount"], 4200)
+        self.assertEqual(FakeStripeCheckoutSession.last_kwargs["customer_email"], "buyer@example.com")
+        self.assertEqual(FakeStripeCheckoutSession.last_kwargs["api_key"], "sk_test_example")
+
+    @patch("apps.payments.adapters.stripe_checkout.stripe_module", return_value=FakeStripe)
+    def test_stripe_webhook_marks_checkout_payment_succeeded(self, _stripe_module):
+        config = ProviderConfig.objects.create(
+            merchant=self.merchant,
+            kind=ProviderConfig.KIND_CARD,
+            provider="stripe-primary",
+            adapter="stripe",
+            priority=10,
+        )
+        secret = ProviderCredential(provider_config=config, name="webhook_secret")
+        secret.set_secret("whsec_test")
+        secret.save()
+        intent = PaymentIntent.objects.create(merchant=self.merchant, amount=1000, currency="USD")
+        attempt = PaymentAttempt.objects.create(
+            intent=intent,
+            provider_config=config,
+            method=PaymentAttempt.METHOD_CARD,
+            provider="stripe-primary",
+            status=PaymentAttempt.STATUS_ACTION_REQUIRED,
+            amount=1000,
+            currency="USD",
+        )
+        FakeStripeWebhook.event = {
+            "id": "evt_stripe_1001",
+            "type": "checkout.session.completed",
+            "data": {
+                "object": {
+                    "id": "cs_test_123",
+                    "payment_status": "paid",
+                    "payment_intent": "pi_test_123",
+                    "client_reference_id": intent.public_id,
+                    "livemode": False,
+                    "metadata": {
+                        "foxpay_payment_intent": intent.public_id,
+                        "foxpay_attempt_id": str(attempt.id),
+                    },
+                }
+            },
+        }
+
+        first = self.client.post(
+            reverse("payments:stripe_webhook_provider", args=["stripe-primary"]),
+            data=b'{"id":"evt_stripe_1001"}',
+            content_type="application/json",
+            HTTP_STRIPE_SIGNATURE="valid-signature",
+        )
+        second = self.client.post(
+            reverse("payments:stripe_webhook_provider", args=["stripe-primary"]),
+            data=b'{"id":"evt_stripe_1001"}',
+            content_type="application/json",
+            HTTP_STRIPE_SIGNATURE="valid-signature",
+        )
+
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(second.status_code, 200)
+        intent.refresh_from_db()
+        attempt.refresh_from_db()
+        self.assertEqual(intent.status, PaymentIntent.STATUS_SUCCEEDED)
+        self.assertEqual(attempt.status, PaymentAttempt.STATUS_SUCCEEDED)
+        self.assertEqual(attempt.provider_reference, "cs_test_123")
+        self.assertEqual(ProviderEvent.objects.count(), 1)
 
     def test_rejects_missing_api_key(self):
         response = self.client.post(

@@ -6,6 +6,7 @@ from django.urls import reverse
 
 from apps.payments.models import PaymentAttempt
 from .base import Capability, PaymentProviderAdapter
+from .stripe_checkout import StripeCheckoutAdapter
 
 
 class MockCardAdapter(PaymentProviderAdapter):
@@ -74,4 +75,6 @@ def get_card_adapter(provider, provider_config=None):
         return MockCardAdapter(provider_config)
     if provider == "hosted":
         return HostedCardAdapter(provider_config)
+    if provider in {"stripe", "stripe_checkout"}:
+        return StripeCheckoutAdapter(provider_config)
     raise ImproperlyConfigured(f"Unsupported card provider: {provider}")

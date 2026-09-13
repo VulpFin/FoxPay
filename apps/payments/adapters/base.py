@@ -33,6 +33,10 @@ class ProviderOperationResult:
     failure_category: str = ""
 
 
+class ProviderAdapterError(Exception):
+    """Raised when a provider is configured but cannot create an attempt."""
+
+
 class PaymentProviderAdapter:
     provider = "base"
     capabilities = []

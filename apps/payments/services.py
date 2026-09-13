@@ -5,6 +5,7 @@ from django.db import transaction
 from django.http import JsonResponse
 from django.urls import reverse
 
+from .adapters.base import ProviderAdapterError
 from .adapters.card import get_card_adapter
 from .adapters.crypto import get_crypto_adapter
 from .events import emit_event
@@ -162,7 +163,7 @@ def create_attempts_for_method(request, merchant, intent, payload, method):
                 created.append(get_card_adapter(provider, provider_config).create_attempt(request, intent, payload))
             if method == PaymentAttempt.METHOD_CRYPTO:
                 created.append(get_crypto_adapter(provider, provider_config).create_attempt(request, intent, payload))
-        except (ImproperlyConfigured, ValueError) as exc:
+        except (ImproperlyConfigured, ProviderAdapterError, ValueError) as exc:
             failures.append(f"{provider}: {exc}")
     if not created:
         raise APIError(f"No available {method} providers. " + " ".join(failures))
@@ -325,10 +326,22 @@ def record_webhook(provider, payload):
         if intent:
             intent.mark_succeeded()
             record_payment_success(intent)
-            attempts = intent.attempts.filter(method=PaymentAttempt.METHOD_CRYPTO)
+            method = payload.get("foxpay_method") or PaymentAttempt.METHOD_CRYPTO
+            attempts = intent.attempts.filter(method=method)
+            attempt_id = payload.get("foxpay_attempt_id")
+            if attempt_id:
+                attempts = attempts.filter(id=attempt_id)
             for attempt in attempts:
                 attempt.status = PaymentAttempt.STATUS_SUCCEEDED
-                attempt.save(update_fields=["status", "updated_at"])
+                if payload.get("provider_reference"):
+                    attempt.provider_reference = payload["provider_reference"]
+                attempt.provider_status = status
+                attempt.provider_response_metadata = {
+                    **attempt.provider_response_metadata,
+                    "webhook_event_type": payload.get("type", ""),
+                    "webhook_provider_event_id": provider_event_id,
+                }
+                attempt.save(update_fields=["status", "provider_reference", "provider_status", "provider_response_metadata", "updated_at"])
                 if hasattr(attempt, "crypto_invoice"):
                     invoice = attempt.crypto_invoice
                     invoice.transaction_id = transaction_id or invoice.transaction_id
@@ -347,6 +360,37 @@ def record_webhook(provider, payload):
                 processed_at=delivery.updated_at,
             )
             emit_event(intent.merchant, "payment_intent.succeeded", serialize_intent(intent), idempotency_key=f"payment_intent.succeeded:{intent.public_id}")
+            delivery.processed = True
+            delivery.save(update_fields=["processed", "updated_at"])
+            return delivery
+
+    if public_id and status in {"failed", "expired", "canceled", "cancelled"}:
+        intent = PaymentIntent.objects.filter(public_id=public_id).first()
+        if intent:
+            intent.status = PaymentIntent.STATUS_EXPIRED if status == "expired" else PaymentIntent.STATUS_FAILED
+            intent.save(update_fields=["status", "updated_at"])
+            method = payload.get("foxpay_method") or PaymentAttempt.METHOD_CRYPTO
+            attempts = intent.attempts.filter(method=method)
+            attempt_id = payload.get("foxpay_attempt_id")
+            if attempt_id:
+                attempts = attempts.filter(id=attempt_id)
+            for attempt in attempts:
+                attempt.status = PaymentAttempt.STATUS_FAILED
+                attempt.provider_status = status
+                attempt.failure_code = payload.get("failure_code", "")
+                attempt.failure_category = payload.get("failure_category", "")
+                attempt.save(update_fields=["status", "provider_status", "failure_code", "failure_category", "updated_at"])
+            ProviderEvent.objects.create(
+                merchant=intent.merchant,
+                provider=provider,
+                provider_event_id=provider_event_id or f"{provider}:{delivery.id}",
+                event_type=payload.get("type", "unknown"),
+                normalized_event_type=f"payment_intent.{intent.status}",
+                payment_intent=intent,
+                payload=payload,
+                processed_at=delivery.updated_at,
+            )
+            emit_event(intent.merchant, f"payment_intent.{intent.status}", serialize_intent(intent), idempotency_key=f"payment_intent.{intent.status}:{intent.public_id}")
             delivery.processed = True
             delivery.save(update_fields=["processed", "updated_at"])
             return delivery

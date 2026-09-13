@@ -4,12 +4,14 @@ import json
 
 from django.conf import settings
 from django.contrib.admin.views.decorators import staff_member_required
+from django.core.exceptions import ImproperlyConfigured
 from django.db import transaction
 from django.http import HttpResponseBadRequest, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_http_methods, require_POST
 
+from .adapters.stripe_checkout import construct_stripe_event, normalize_stripe_event
 from .events import emit_event
 from .ledger import record_payment_success
 from .models import PaymentAttempt, PaymentIntent
@@ -172,6 +174,19 @@ def crypto_webhook(request, provider):
         return error_response(exc.message, exc.status, request_id=getattr(request, "request_id", ""), type=exc.type, code=exc.code)
 
 
+@csrf_exempt
+@require_POST
+def stripe_webhook(request, provider="stripe"):
+    try:
+        _, event = construct_stripe_event(request, provider=provider)
+        delivery = record_webhook(provider, normalize_stripe_event(event))
+        return JsonResponse({"received": True, "processed": delivery.processed})
+    except ImproperlyConfigured as exc:
+        return error_response(str(exc), 500, request_id=getattr(request, "request_id", ""), code="provider_not_configured")
+    except Exception as exc:
+        return error_response(str(exc), 401, request_id=getattr(request, "request_id", ""), type="authentication_error", code="invalid_signature")
+
+
 @staff_member_required
 def dashboard(request):
     intents = PaymentIntent.objects.select_related("merchant").prefetch_related("attempts").order_by("-created_at")[:50]
@@ -204,6 +219,9 @@ def openapi(request):
                 },
                 "/api/v1/webhooks/crypto/{provider}/": {
                     "post": {"summary": "Receive normalized provider crypto webhook"}
+                },
+                "/api/v1/webhooks/stripe/{provider}/": {
+                    "post": {"summary": "Receive Stripe Checkout webhook events"}
                 },
             },
         }

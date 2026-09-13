@@ -28,3 +28,6 @@ Fox Pay deliberately delegates:
 
 Do not describe Fox Pay as PCI certified, licensed, or regulated unless those reviews and approvals have actually happened.
 
+For the current production bridge, Stripe is the card processor. Fox Pay routes
+to Stripe-hosted Checkout and records normalized state after signed Stripe
+webhooks; it should not collect card numbers, CVV, or magnetic-stripe/EMV data.

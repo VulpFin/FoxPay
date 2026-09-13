@@ -5,6 +5,7 @@ Fox Pay is a VulpFin payment platform scaffold for accepting card and crypto pay
 The first version is intentionally provider-adapter based:
 
 - Card and debit payments are handled through hosted processor/acquirer pages. Fox Pay does not collect or store raw card numbers.
+- Stripe Checkout can be enabled as the first production card/debit route while additional providers are added behind the same adapter boundary.
 - Crypto payments are represented as invoices and webhook-confirmed settlement events.
 - Merchants receive API keys and create payment intents through a JSON API.
 - Fox Pay records customers, refunds, provider events, merchant webhook events, audit logs, and double-entry ledger transactions.
@@ -72,7 +73,7 @@ Merchants can use multiple active provider configs per payment method. In Django
 
 - `kind`: `card` or `crypto`
 - `provider`: merchant-facing provider code, such as `card-primary`, `card-eu`, or `btc-wallet-backup`
-- `adapter`: Fox Pay adapter implementation, such as `mock`, `hosted`, or `manual`
+- `adapter`: Fox Pay adapter implementation, such as `mock`, `stripe`, `hosted`, or `manual`
 - `priority`: lower numbers are shown first
 - `settings`: provider-specific JSON
 
@@ -81,6 +82,7 @@ When a payment intent is created, Fox Pay creates payment options for every acti
 Card fallback settings:
 
 - `FOXPAY_CARD_PROVIDER=mock` creates a test-only hosted checkout page.
+- `FOXPAY_CARD_PROVIDER=stripe` creates Stripe-hosted Checkout Sessions.
 - `FOXPAY_CARD_PROVIDER=hosted` points card users to `FOXPAY_CARD_PROVIDER_CHECKOUT_URL`.
 
 Hosted card provider config example:
@@ -110,6 +112,17 @@ Manual crypto provider config example:
 You can also seed provider configs during `bootstrap_merchant` by setting
 `FOXPAY_PROVIDER_CONFIGS` in `.env`. See `.env.example` for primary/backup
 card and crypto examples.
+
+Stripe provider setup:
+
+```powershell
+$env:STRIPE_SECRET_KEY = "sk_test_or_live..."
+$env:STRIPE_WEBHOOK_SECRET = "whsec_..."
+python manage.py configure_stripe_provider --merchant vulpfin --provider stripe-primary --activate
+```
+
+Use the matching Fox Pay environment for the key type: test keys with
+`FOXPAY_ENV=test`, live keys with `FOXPAY_ENV=live`.
 
 ## Monitoring
 
