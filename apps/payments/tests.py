@@ -233,7 +233,7 @@ class PaymentIntentAPITests(TestCase):
             provider="stripe-primary",
             adapter="stripe",
             priority=10,
-            settings={"payment_method_types": ["card"]},
+            settings={"payment_method_types": ["card"], "automatic_tax": True, "tax_behavior": "exclusive"},
         )
         credential = ProviderCredential(provider_config=config, name="secret_key")
         credential.set_secret("sk_test_example")
@@ -263,6 +263,8 @@ class PaymentIntentAPITests(TestCase):
         self.assertEqual(FakeStripeCheckoutSession.last_kwargs["mode"], "payment")
         self.assertEqual(FakeStripeCheckoutSession.last_kwargs["payment_method_types"], ["card"])
         self.assertEqual(FakeStripeCheckoutSession.last_kwargs["line_items"][0]["price_data"]["unit_amount"], 4200)
+        self.assertEqual(FakeStripeCheckoutSession.last_kwargs["line_items"][0]["price_data"]["tax_behavior"], "exclusive")
+        self.assertTrue(FakeStripeCheckoutSession.last_kwargs["automatic_tax"]["enabled"])
         self.assertEqual(FakeStripeCheckoutSession.last_kwargs["customer_email"], "buyer@example.com")
         self.assertEqual(FakeStripeCheckoutSession.last_kwargs["api_key"], "sk_test_example")
 

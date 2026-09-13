@@ -22,6 +22,7 @@ class Command(BaseCommand):
         parser.add_argument("--webhook-secret", default="", help="Stripe webhook endpoint secret. Prefer --webhook-secret-env.")
         parser.add_argument("--webhook-secret-env", default="STRIPE_WEBHOOK_SECRET", help="Environment variable containing the Stripe webhook secret.")
         parser.add_argument("--automatic-tax", action="store_true", help="Enable Stripe automatic_tax for Checkout Sessions.")
+        parser.add_argument("--tax-behavior", choices=["exclusive", "inclusive", "unspecified"], default="exclusive", help="Stripe Price tax_behavior for dynamic Checkout line items.")
 
     def handle(self, *args, **options):
         if options["activate"] and options["deactivate"]:
@@ -46,6 +47,7 @@ class Command(BaseCommand):
         settings_json = {"payment_method_types": ["card"]}
         if options["automatic_tax"]:
             settings_json["automatic_tax"] = True
+            settings_json["tax_behavior"] = options["tax_behavior"]
 
         is_active = True if options["activate"] else False if options["deactivate"] else False
         stored = []

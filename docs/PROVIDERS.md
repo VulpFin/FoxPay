@@ -32,7 +32,9 @@ Recommended provider config:
   "priority": 10,
   "is_active": true,
   "settings": {
-    "payment_method_types": ["card"]
+    "payment_method_types": ["card"],
+    "automatic_tax": true,
+    "tax_behavior": "exclusive"
   }
 }
 ```

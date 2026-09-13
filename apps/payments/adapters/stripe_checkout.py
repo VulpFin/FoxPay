@@ -91,6 +91,16 @@ class StripeCheckoutAdapter(PaymentProviderAdapter):
         if intent.capture_strategy == PaymentIntent.CAPTURE_MANUAL:
             payment_intent_data["capture_method"] = "manual"
 
+        price_data = {
+            "currency": intent.currency.lower(),
+            "unit_amount": intent.amount,
+            "product_data": {"name": intent.description or "Fox Pay payment"},
+        }
+        if config.get("automatic_tax"):
+            price_data["tax_behavior"] = config.get("tax_behavior", "exclusive")
+            if config.get("tax_code"):
+                price_data["product_data"]["tax_code"] = config["tax_code"]
+
         params = {
             "mode": "payment",
             "client_reference_id": intent.public_id,
@@ -98,11 +108,7 @@ class StripeCheckoutAdapter(PaymentProviderAdapter):
             "cancel_url": cancel_url,
             "line_items": [
                 {
-                    "price_data": {
-                        "currency": intent.currency.lower(),
-                        "unit_amount": intent.amount,
-                        "product_data": {"name": intent.description or "Fox Pay payment"},
-                    },
+                    "price_data": price_data,
                     "quantity": 1,
                 }
             ],
