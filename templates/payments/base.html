@@ -5,20 +5,35 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}Fox Pay{% endblock %}</title>
+  <script src="{% static 'foxpay/theme.js' %}"></script>
   <link rel="stylesheet" href="{% static 'foxpay/app.css' %}">
 </head>
 <body>
   <header class="topbar">
     <a class="brand" href="/">Fox Pay</a>
     <span class="product">VulpFin payments</span>
-    {% if user.is_authenticated %}
-      <nav class="topnav" aria-label="Account">
-        <a href="/">Account</a>
-        {% if user.is_staff %}<a href="{% url 'payments:dashboard' %}">Operations</a>{% endif %}
-        <a href="/connections/">Connections</a>
-      </nav>
-      <form method="post" action="{% url 'tg11_auth:logout' %}" class="topbar-logout">{% csrf_token %}<button type="submit" class="text-button">Sign out</button></form>
-    {% endif %}
+    <div class="topbar-controls">
+      {% if user.is_authenticated %}
+        <nav class="topnav" aria-label="Account">
+          <a href="/">Account</a>
+          {% if user.is_staff %}<a href="{% url 'payments:dashboard' %}">Operations</a>{% endif %}
+          <a href="/connections/">Connections</a>
+        </nav>
+      {% endif %}
+      <button type="button" id="theme-toggle" class="theme-toggle" aria-label="Theme: light" aria-pressed="false" title="Light mode">
+        <svg class="theme-icon theme-icon-sun" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="4" />
+          <path d="M12 2v2" /><path d="M12 20v2" /><path d="m4.93 4.93 1.41 1.41" /><path d="m17.66 17.66 1.41 1.41" />
+          <path d="M2 12h2" /><path d="M20 12h2" /><path d="m6.34 17.66-1.41 1.41" /><path d="m19.07 4.93-1.41 1.41" />
+        </svg>
+        <svg class="theme-icon theme-icon-moon" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M20.985 12.486a9 9 0 1 1-9.473-9.472c.405-.022.617.46.402.803a6 6 0 0 0 8.268 8.268c.344-.215.825-.004.803.401" />
+        </svg>
+      </button>
+      {% if user.is_authenticated %}
+        <form method="post" action="{% url 'tg11_auth:logout' %}" class="topbar-logout">{% csrf_token %}<button type="submit" class="text-button">Sign out</button></form>
+      {% endif %}
+    </div>
   </header>
   <main class="shell">
     {% if messages %}<div class="flash-stack" role="status">{% for message in messages %}<p class="flash">{{ message }}</p>{% endfor %}</div>{% endif %}

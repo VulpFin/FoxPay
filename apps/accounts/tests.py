@@ -45,6 +45,8 @@ class AccountDashboardTests(TestCase):
         response = self.client.get("/")
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Sign in")
+        self.assertContains(response, 'id="theme-toggle"')
+        self.assertContains(response, "foxpay/theme.js")
         self.assertNotContains(response, "My purchase")
 
     def test_scoped_payments_orders_subscriptions_and_methods(self):
