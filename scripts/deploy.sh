@@ -3,10 +3,18 @@ set -euo pipefail
 
 APP_DIR="${APP_DIR:-/var/www/FoxPay/app}"
 VENV_DIR="${VENV_DIR:-/var/www/FoxPay/.venv}"
+ENV_FILE="${ENV_FILE:-/etc/foxpay/foxpay.env}"
 SERVICE_NAME="${SERVICE_NAME:-foxpay}"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 
 cd "$APP_DIR"
+
+if [ -f "$ENV_FILE" ]; then
+  set -a
+  # shellcheck disable=SC1090
+  . "$ENV_FILE"
+  set +a
+fi
 
 if [ ! -d "$VENV_DIR" ]; then
   "$PYTHON_BIN" -m venv "$VENV_DIR"
