@@ -3,18 +3,22 @@ import hashlib
 import hmac
 import base64
 from io import StringIO
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from django.contrib.auth import get_user_model
 from django.core.management import call_command
 from django.core.management.base import CommandError
 from django.test import TestCase, override_settings
+from django.test import RequestFactory
 from django.urls import reverse
 
 from .adapters.nowpayments import canonical_ipn
 from .adapters.square_webhooks import verify_square_signature
+from .adapters.square_checkout import SquareCheckoutAdapter
+from .adapters.stripe_methods import create_setup_checkout, detach_saved_method, record_setup_checkout
 from .ledger import transaction_balances
 from .services import record_webhook
+from .services import APIError, get_or_create_customer
 from .models import (
     APIKey,
     Customer,
@@ -24,10 +28,13 @@ from .models import (
     MerchantWebhookEndpoint,
     PaymentAttempt,
     PaymentIntent,
+    PaymentMethodReference,
     ProviderConfig,
     ProviderCredential,
+    ProviderCustomerReference,
     ProviderEvent,
     Refund,
+    SubscriptionReference,
     WebhookDelivery,
 )
 
@@ -803,8 +810,8 @@ class SquareWebhookTests(TestCase):
         first = self.send_event(event)
         second = self.send_event(event)
         self.assertEqual(first.status_code, 200)
-        self.assertEqual(first.json(), {"received": True, "recorded": True})
-        self.assertEqual(second.json(), {"received": True, "recorded": False})
+        self.assertEqual(first.json(), {"received": True, "recorded": True, "reconciled": False})
+        self.assertEqual(second.json(), {"received": True, "recorded": False, "reconciled": False})
         self.assertEqual(ProviderEvent.objects.count(), 1)
         self.assertEqual(WebhookDelivery.objects.count(), 1)
         recorded = ProviderEvent.objects.get()
@@ -857,3 +864,183 @@ class SquareWebhookTests(TestCase):
                 stdout=StringIO(),
             )
         self.assertEqual(ProviderConfig.objects.count(), 0)
+
+    def test_square_checkout_and_signed_payment_reconcile_once(self):
+        config = self.configure()
+        with patch.dict("os.environ", {"SQUARE_ACCESS_TOKEN": "square-test-token"}):
+            call_command(
+                "configure_square_checkout_provider",
+                merchant="vulpfin",
+                environment="live",
+                location_id="SQ_LOCATION_1",
+                square_merchant_id="square-merchant-1",
+                activate=True,
+                stdout=StringIO(),
+            )
+        config.refresh_from_db()
+        self.assertTrue(config.is_active)
+        self.assertNotIn("square-test-token", config.credentials.get(name="access_token").encrypted_value)
+        intent = PaymentIntent.objects.create(merchant=self.merchant, amount=2500, currency="USD", environment="live")
+        response = type("SquareResponse", (), {
+            "raise_for_status": lambda self: None,
+            "json": lambda self: {"payment_link": {"id": "link-1", "order_id": "order-1", "url": "https://square.link/u/link-1"}},
+        })()
+        with patch("apps.payments.adapters.square_checkout.requests.post", return_value=response) as post:
+            request = RequestFactory().get("/", secure=True, HTTP_HOST="testserver")
+            attempt = SquareCheckoutAdapter(config).create_attempt(request, intent, {})
+        self.assertEqual(attempt.checkout_url, "https://square.link/u/link-1")
+        self.assertEqual(post.call_args.kwargs["json"]["quick_pay"]["price_money"], {"amount": 2500, "currency": "USD"})
+        self.assertEqual(post.call_args.kwargs["json"]["quick_pay"]["location_id"], "SQ_LOCATION_1")
+        event = {
+            "event_id": "evt_square_paid_1",
+            "type": "payment.updated",
+            "merchant_id": "square-merchant-1",
+            "data": {"type": "payment", "id": "payment-1", "object": {"payment": {
+                "id": "payment-1", "order_id": "order-1", "location_id": "SQ_LOCATION_1",
+                "status": "COMPLETED", "total_money": {"amount": 2500, "currency": "USD"},
+                "card_details": {"card": {"fingerprint": "private-card-data"}},
+            }}},
+        }
+        first = self.send_event(event)
+        second = self.send_event(event)
+        self.assertEqual(first.status_code, 200)
+        self.assertTrue(first.json()["reconciled"])
+        self.assertEqual(second.status_code, 200)
+        intent.refresh_from_db()
+        attempt.refresh_from_db()
+        self.assertEqual(intent.status, PaymentIntent.STATUS_SUCCEEDED)
+        self.assertEqual(attempt.status, PaymentAttempt.STATUS_SUCCEEDED)
+        self.assertEqual(attempt.provider_reference, "payment-1")
+        self.assertNotIn("private-card-data", json.dumps(list(WebhookDelivery.objects.values_list("payload", flat=True))))
+
+    def test_square_webhook_rejects_wrong_amount_for_linked_order(self):
+        config = self.configure()
+        intent = PaymentIntent.objects.create(merchant=self.merchant, amount=2500, currency="USD", environment="live")
+        PaymentAttempt.objects.create(
+            intent=intent, provider_config=config, method="card", provider="square-primary", amount=2500, currency="USD",
+            provider_response_metadata={"square_order_id": "order-1", "square_location_id": "SQ_LOCATION_1"},
+        )
+        event = {"event_id": "evt_wrong_amount", "type": "payment.updated", "data": {"type": "payment", "object": {"payment": {
+            "id": "payment-1", "order_id": "order-1", "location_id": "SQ_LOCATION_1", "status": "COMPLETED",
+            "total_money": {"amount": 100, "currency": "USD"},
+        }}}}
+        self.assertFalse(self.send_event(event).json()["reconciled"])
+        intent.refresh_from_db()
+        self.assertNotEqual(intent.status, PaymentIntent.STATUS_SUCCEEDED)
+
+
+class CustomerIdentityAndSubscriptionTests(TestCase):
+    def setUp(self):
+        User = get_user_model()
+        self.owner = User.objects.create_user("owner", password="test-pass")
+        self.merchant = Merchant.objects.create(owner=self.owner, name="VulpFin", slug="vulpfin")
+        _, self.key = APIKey.issue(self.merchant, scopes=["subscriptions:write"])
+        self.subject = "00000000-0000-4000-8000-000000000001"
+
+    def test_merchant_can_sync_subscription_for_verified_subject_mapping(self):
+        payload = {
+            "customer": {"external_id": "customer-1", "tg11_user_uuid": self.subject},
+            "provider": "stripe",
+            "provider_reference": "sub_123",
+            "plan_name": "Fox plan",
+            "status": "active",
+            "amount": 1200,
+            "currency": "USD",
+            "current_period_end": "2027-01-01T00:00:00Z",
+        }
+        url = reverse("payments:subscription_references")
+        response = self.client.post(url, data=json.dumps(payload), content_type="application/json", HTTP_X_FOXPAY_KEY=self.key)
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(SubscriptionReference.objects.count(), 1)
+        self.assertEqual(str(Customer.objects.get().tg11_user_uuid), self.subject)
+        payload["status"] = "canceled"
+        response = self.client.post(url, data=json.dumps(payload), content_type="application/json", HTTP_X_FOXPAY_KEY=self.key)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(SubscriptionReference.objects.get().status, "canceled")
+
+    def test_subscription_cannot_move_to_another_customer(self):
+        url = reverse("payments:subscription_references")
+        payload = {"customer": {"tg11_user_uuid": self.subject}, "provider": "stripe", "provider_reference": "sub_123", "plan_name": "Fox plan", "status": "active"}
+        self.assertEqual(self.client.post(url, data=json.dumps(payload), content_type="application/json", HTTP_X_FOXPAY_KEY=self.key).status_code, 201)
+        payload["customer"]["tg11_user_uuid"] = "a25156f4-3d63-40f9-8f19-8fa0d32f87b5"
+        self.assertEqual(self.client.post(url, data=json.dumps(payload), content_type="application/json", HTTP_X_FOXPAY_KEY=self.key).status_code, 409)
+        self.assertEqual(SubscriptionReference.objects.count(), 1)
+
+    def test_customer_identity_conflicts_are_rejected(self):
+        Customer.objects.create(merchant=self.merchant, external_id="customer-1", tg11_user_uuid=self.subject)
+        Customer.objects.create(merchant=self.merchant, external_id="customer-2", tg11_user_uuid="a25156f4-3d63-40f9-8f19-8fa0d32f87b5")
+        with self.assertRaises(APIError):
+            get_or_create_customer(self.merchant, {"customer": {"external_id": "customer-1", "tg11_user_uuid": "a25156f4-3d63-40f9-8f19-8fa0d32f87b5"}})
+
+    def test_subscription_sync_requires_scoped_key(self):
+        _, read_key = APIKey.issue(self.merchant, scopes=["payments:read"])
+        response = self.client.post(
+            reverse("payments:subscription_references"),
+            data=json.dumps({"customer": {"tg11_user_uuid": self.subject}, "provider": "stripe", "provider_reference": "sub_123", "plan_name": "Fox plan", "status": "active"}),
+            content_type="application/json",
+            HTTP_X_FOXPAY_KEY=read_key,
+        )
+        self.assertEqual(response.status_code, 403)
+
+
+class StripeSavedMethodTests(TestCase):
+    def setUp(self):
+        user = get_user_model().objects.create_user("owner")
+        self.merchant = Merchant.objects.create(owner=user, name="VulpFin", slug="vulpfin")
+        self.customer = Customer.objects.create(merchant=self.merchant, tg11_user_uuid="00000000-0000-4000-8000-000000000001")
+        self.config = ProviderConfig.objects.create(
+            merchant=self.merchant, kind="card", provider="stripe-primary", adapter="stripe", environment="test",
+        )
+        credential = ProviderCredential(provider_config=self.config, name="secret_key")
+        credential.set_secret("sk_test_mock")
+        credential.save()
+        self.stripe = Mock()
+        self.stripe.Customer.create.return_value = {"id": "cus_test_1", "livemode": False}
+        self.stripe.checkout.Session.create.return_value = {
+            "url": "https://checkout.stripe.com/c/pay/setup-1", "customer": "cus_test_1", "livemode": False,
+        }
+        self.stripe.SetupIntent.retrieve.return_value = {
+            "status": "succeeded", "customer": "cus_test_1", "payment_method": "pm_test_1",
+        }
+        self.stripe.PaymentMethod.retrieve.return_value = {
+            "id": "pm_test_1", "customer": "cus_test_1", "type": "card",
+            "card": {"brand": "visa", "last4": "4242", "exp_month": 12, "exp_year": 2030},
+        }
+
+    def test_setup_webhook_saves_only_masked_method_and_detaches(self):
+        request = RequestFactory().post("/", secure=True, HTTP_HOST="testserver")
+        with patch("apps.payments.adapters.stripe_methods.stripe_module", return_value=self.stripe):
+            url = create_setup_checkout(request, self.config, self.customer)
+            self.assertEqual(url, "https://checkout.stripe.com/c/pay/setup-1")
+            self.assertEqual(ProviderCustomerReference.objects.get().provider_reference, "cus_test_1")
+            event = {
+                "id": "evt_setup_1", "type": "checkout.session.completed", "livemode": False,
+                "data": {"object": {
+                    "mode": "setup", "status": "complete", "customer": "cus_test_1",
+                    "client_reference_id": str(self.customer.uuid), "setup_intent": "seti_test_1",
+                    "metadata": {"foxpay_customer_uuid": str(self.customer.uuid), "foxpay_provider_config_id": str(self.config.pk)},
+                }},
+            }
+            self.assertTrue(record_setup_checkout(self.config, event))
+            self.assertTrue(record_setup_checkout(self.config, event))
+            method = PaymentMethodReference.objects.get()
+            self.assertEqual(method.display_metadata["last4"], "4242")
+            self.assertEqual(WebhookDelivery.objects.count(), 1)
+            self.assertNotIn("sk_test_mock", json.dumps(WebhookDelivery.objects.get().payload))
+            detach_saved_method(method)
+        self.stripe.PaymentMethod.detach.assert_called_once()
+        self.assertEqual(PaymentMethodReference.objects.count(), 0)
+
+    def test_setup_webhook_rejects_another_customer(self):
+        ProviderCustomerReference.objects.create(provider_config=self.config, customer=self.customer, provider_reference="cus_test_1")
+        event = {
+            "id": "evt_setup_2", "type": "checkout.session.completed", "livemode": False,
+            "data": {"object": {
+                "mode": "setup", "status": "complete", "customer": "cus_someone_else",
+                "client_reference_id": str(self.customer.uuid), "setup_intent": "seti_test_2",
+                "metadata": {"foxpay_customer_uuid": str(self.customer.uuid), "foxpay_provider_config_id": str(self.config.pk)},
+            }},
+        }
+        with patch("apps.payments.adapters.stripe_methods.stripe_module", return_value=self.stripe):
+            self.assertFalse(record_setup_checkout(self.config, event))
+        self.assertEqual(PaymentMethodReference.objects.count(), 0)

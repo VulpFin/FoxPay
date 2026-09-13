@@ -8,15 +8,18 @@ from django.core.exceptions import ImproperlyConfigured
 from django.db import transaction
 from django.http import HttpResponseBadRequest, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
+from django.utils.dateparse import parse_datetime
+from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_http_methods, require_POST
 
 from .adapters.stripe_checkout import construct_stripe_event, normalize_stripe_event
+from .adapters.stripe_methods import record_setup_checkout
 from .adapters.nowpayments import ipn_attempt, normalize_ipn, provider_secret, validate_ipn_amount, verify_ipn
-from .adapters.square_webhooks import record_square_event, verify_square_signature
+from .adapters.square_webhooks import record_square_event, square_payment_update, verify_square_signature
 from .events import emit_event
 from .ledger import record_payment_success
-from .models import PaymentAttempt, PaymentIntent, ProviderConfig
+from .models import AuditLog, PaymentAttempt, PaymentIntent, ProviderConfig, SubscriptionReference
 from .services import (
     APIError,
     authenticate_merchant,
@@ -24,6 +27,7 @@ from .services import (
     create_refund,
     enforce_rate_limit,
     error_response,
+    get_or_create_customer,
     record_webhook,
     serialize_intent,
     serialize_refund,
@@ -94,6 +98,72 @@ def refunds(request, public_id):
             idempotency_key=request.headers.get("Idempotency-Key", ""),
         )
         return JsonResponse(serialize_refund(refund), status=201)
+    except APIError as exc:
+        return error_response(exc.message, exc.status, request_id=getattr(request, "request_id", ""), type=exc.type, code=exc.code)
+
+
+@csrf_exempt
+@require_POST
+def subscription_references(request):
+    try:
+        merchant = api_merchant(request, required_scope="subscriptions:write")
+        payload = parse_json(request)
+        if not isinstance(payload, dict):
+            raise APIError("Request body must be an object.")
+        customer_payload = payload.get("customer")
+        if not isinstance(customer_payload, dict) or not customer_payload.get("tg11_user_uuid"):
+            raise APIError("customer.tg11_user_uuid is required.")
+        provider = payload.get("provider")
+        reference = payload.get("provider_reference")
+        plan_name = payload.get("plan_name")
+        status = payload.get("status")
+        allowed_statuses = {"active", "trialing", "past_due", "paused", "canceled", "unpaid", "incomplete", "incomplete_expired"}
+        if not isinstance(provider, str) or not 0 < len(provider) <= 40:
+            raise APIError("provider must be 1 to 40 characters.")
+        if not isinstance(reference, str) or not 0 < len(reference) <= 180:
+            raise APIError("provider_reference must be 1 to 180 characters.")
+        if not isinstance(plan_name, str) or not 0 < len(plan_name) <= 160:
+            raise APIError("plan_name must be 1 to 160 characters.")
+        if status not in allowed_statuses:
+            raise APIError("status is not supported.")
+        amount = payload.get("amount")
+        if amount is not None and (not isinstance(amount, int) or isinstance(amount, bool) or amount < 0):
+            raise APIError("amount must be a nonnegative integer or null.")
+        currency = payload.get("currency") or ""
+        if not isinstance(currency, str) or (currency and (len(currency) != 3 or not currency.isalpha())):
+            raise APIError("currency must be a three-letter code.")
+        if amount is not None and (not isinstance(currency, str) or len(currency) != 3 or not currency.isalpha()):
+            raise APIError("currency must be a three-letter code when amount is set.")
+        cancel_at_period_end = payload.get("cancel_at_period_end", False)
+        if not isinstance(cancel_at_period_end, bool):
+            raise APIError("cancel_at_period_end must be a boolean.")
+        period_end = payload.get("current_period_end")
+        if period_end:
+            period_end = parse_datetime(period_end) if isinstance(period_end, str) else None
+            if not period_end or timezone.is_naive(period_end):
+                raise APIError("current_period_end must be an ISO 8601 timestamp with timezone.")
+        with transaction.atomic():
+            customer = get_or_create_customer(merchant, payload)
+            existing = SubscriptionReference.objects.select_for_update().filter(
+                merchant=merchant, provider=provider, provider_reference=reference
+            ).first()
+            if existing and existing.customer_id != customer.pk:
+                raise APIError("Subscription is already linked to another customer.", status=409)
+            subscription, created = SubscriptionReference.objects.update_or_create(
+                merchant=merchant,
+                provider=provider,
+                provider_reference=reference,
+                defaults={
+                    "customer": customer,
+                    "plan_name": plan_name,
+                    "status": status,
+                    "amount": amount,
+                    "currency": currency.upper(),
+                    "current_period_end": period_end,
+                    "cancel_at_period_end": cancel_at_period_end,
+                },
+            )
+        return JsonResponse({"id": subscription.pk, "created": created}, status=201 if created else 200)
     except APIError as exc:
         return error_response(exc.message, exc.status, request_id=getattr(request, "request_id", ""), type=exc.type, code=exc.code)
 
@@ -180,13 +250,21 @@ def crypto_webhook(request, provider):
 @require_POST
 def stripe_webhook(request, provider="stripe"):
     try:
-        _, event = construct_stripe_event(request, provider=provider)
-        delivery = record_webhook(provider, normalize_stripe_event(event))
-        return JsonResponse({"received": True, "processed": delivery.processed})
+        config, event = construct_stripe_event(request, provider=provider)
     except ImproperlyConfigured as exc:
         return error_response(str(exc), 500, request_id=getattr(request, "request_id", ""), code="provider_not_configured")
-    except Exception as exc:
-        return error_response(str(exc), 401, request_id=getattr(request, "request_id", ""), type="authentication_error", code="invalid_signature")
+    except Exception:
+        return error_response("Invalid Stripe webhook signature.", 401, request_id=getattr(request, "request_id", ""), type="authentication_error", code="invalid_signature")
+    try:
+        if event.get("type") == "checkout.session.completed" and event.get("data", {}).get("object", {}).get("mode") == "setup":
+            if not config:
+                return error_response("Stripe setup webhook has no provider configuration.", 503, request_id=getattr(request, "request_id", ""), code="provider_not_configured")
+            processed = record_setup_checkout(config, event)
+            return JsonResponse({"received": True, "processed": processed})
+        delivery = record_webhook(provider, normalize_stripe_event(event))
+        return JsonResponse({"received": True, "processed": delivery.processed})
+    except Exception:
+        return error_response("Stripe webhook could not be processed.", 503, request_id=getattr(request, "request_id", ""), code="webhook_processing_failed")
 
 
 @csrf_exempt
@@ -266,8 +344,20 @@ def square_webhook(request, merchant_slug, provider):
         or not 0 < len(event["type"]) <= 120
     ):
         return error_response("Square webhook event_id and type are required.", 400, request_id=getattr(request, "request_id", ""), code="invalid_event")
-    recorded = record_square_event(config, event)
-    return JsonResponse({"received": True, "recorded": recorded})
+    with transaction.atomic():
+        recorded = record_square_event(config, event)
+        update, error = square_payment_update(config, event)
+        if error and recorded:
+            AuditLog.objects.create(
+                merchant=config.merchant,
+                action="square.webhook.reconciliation_skipped",
+                object_type="provider_event",
+                object_id=event["event_id"][:120],
+                metadata={"reason": error},
+            )
+        if update:
+            record_webhook(f"square-payment:{config.pk}", update)
+    return JsonResponse({"received": True, "recorded": recorded, "reconciled": bool(update)})
 
 
 @staff_member_required
@@ -299,6 +389,9 @@ def openapi(request):
                         "summary": "Create a refund",
                         "parameters": [{"name": "Idempotency-Key", "in": "header", "required": False}],
                     }
+                },
+                "/api/v1/subscription-references/": {
+                    "post": {"summary": "Upsert a merchant-owned subscription display reference"}
                 },
                 "/api/v1/webhooks/crypto/{provider}/": {
                     "post": {"summary": "Receive normalized provider crypto webhook"}

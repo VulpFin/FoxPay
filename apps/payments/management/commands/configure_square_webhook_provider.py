@@ -82,4 +82,4 @@ class Command(BaseCommand):
         self.stdout.write(self.style.SUCCESS("Square webhook provider configured."))
         self.stdout.write(f"Notification URL: {notification_url}")
         self.stdout.write(f"Signature key configured: {config.credentials.filter(name='webhook_signature_key', revoked_at__isnull=True).exists()}")
-        self.stdout.write("Checkout activation: unavailable until a Square payment adapter is implemented.")
+        self.stdout.write("Configure location and access token with configure_square_checkout_provider before checkout activation.")

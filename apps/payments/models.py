@@ -232,6 +232,7 @@ class Customer(TimeStampedModel):
     uuid = models.UUIDField(default=uuid.uuid4, db_index=True, editable=False)
     merchant = models.ForeignKey(Merchant, on_delete=models.CASCADE, related_name="customers")
     external_id = models.CharField(max_length=160, blank=True)
+    tg11_user_uuid = models.UUIDField(blank=True, null=True, db_index=True)
     email = models.EmailField(blank=True)
     name = models.CharField(max_length=180, blank=True)
     metadata = models.JSONField(default=dict, blank=True)
@@ -239,6 +240,7 @@ class Customer(TimeStampedModel):
     class Meta:
         constraints = [
             models.UniqueConstraint(fields=["merchant", "external_id"], condition=~models.Q(external_id=""), name="unique_merchant_customer_external_id"),
+            models.UniqueConstraint(fields=["merchant", "tg11_user_uuid"], name="unique_merchant_customer_tg11_user"),
         ]
 
     def __str__(self):
@@ -257,8 +259,49 @@ class PaymentMethodReference(TimeStampedModel):
     expires_at = models.DateTimeField(blank=True, null=True)
     fingerprint = models.CharField(max_length=120, blank=True)
 
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["provider_config", "provider_reference"], name="unique_provider_payment_method_reference"),
+        ]
+
     def __str__(self):
         return f"{self.type} {self.provider}"
+
+
+class ProviderCustomerReference(TimeStampedModel):
+    provider_config = models.ForeignKey(ProviderConfig, on_delete=models.PROTECT, related_name="customer_references")
+    customer = models.ForeignKey(Customer, on_delete=models.CASCADE, related_name="provider_references")
+    provider_reference = models.CharField(max_length=180)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["provider_config", "customer"], name="unique_provider_customer"),
+            models.UniqueConstraint(fields=["provider_config", "provider_reference"], name="unique_provider_customer_reference"),
+        ]
+
+
+class SubscriptionReference(TimeStampedModel):
+    merchant = models.ForeignKey(Merchant, on_delete=models.CASCADE, related_name="subscription_references")
+    customer = models.ForeignKey(Customer, on_delete=models.CASCADE, related_name="subscription_references")
+    provider = models.CharField(max_length=40)
+    provider_reference = models.CharField(max_length=180)
+    plan_name = models.CharField(max_length=160)
+    status = models.CharField(max_length=40)
+    amount = models.PositiveIntegerField(blank=True, null=True)
+    currency = models.CharField(max_length=3, blank=True)
+    current_period_end = models.DateTimeField(blank=True, null=True)
+    cancel_at_period_end = models.BooleanField(default=False)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["merchant", "provider", "provider_reference"],
+                name="unique_merchant_subscription_reference",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.merchant} {self.plan_name}"
 
 
 class PaymentIntent(TimeStampedModel):

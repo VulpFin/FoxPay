@@ -5,4 +5,6 @@ gunicorn>=21.2,<23.0
 psycopg[binary]>=3.1,<4.0
 sentry-sdk[django]>=2.0,<3.0
 stripe>=10.0,<14.0
+requests>=2.31,<3.0
 whitenoise>=6.6,<7.0
+tg11-auth @ git+https://github.com/tg11-org/TG11Accounts.git@5ce309902a9fbd470178da24c5c7288198748137#subdirectory=clients/django

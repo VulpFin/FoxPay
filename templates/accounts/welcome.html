@@ -1,0 +1,17 @@
+{% extends "payments/base.html" %}
+
+{% block title %}Sign in - Fox Pay{% endblock %}
+
+{% block content %}
+<section class="signin">
+  <p class="eyebrow">Account</p>
+  <h1>Fox Pay</h1>
+  <p class="lead">Sign in to see your payments, subscriptions, and connected accounts.</p>
+  <div class="actions">
+    {% if tg11_configured %}
+      <a class="button-link" href="{% url 'tg11_auth:login' %}">Continue with TG11</a>
+    {% endif %}
+    <a class="button-link outline" href="/admin/login/">Staff sign in</a>
+  </div>
+</section>
+{% endblock %}

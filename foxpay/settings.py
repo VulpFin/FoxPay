@@ -32,6 +32,7 @@ INSTALLED_APPS = [
     "django.contrib.staticfiles",
     "apps.accounts",
     "apps.payments",
+    "tg11_auth",
 ]
 
 MIDDLEWARE = [
@@ -59,6 +60,7 @@ TEMPLATES = [
                 "django.template.context_processors.request",
                 "django.contrib.auth.context_processors.auth",
                 "django.contrib.messages.context_processors.messages",
+                "tg11_auth.context_processors.tg11",
             ],
         },
     },
@@ -93,7 +95,26 @@ STORAGES = {
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 AUTH_USER_MODEL = "accounts.User"
-LOGIN_URL = "/admin/login/"
+AUTHENTICATION_BACKENDS = [
+    "django.contrib.auth.backends.ModelBackend",
+    "tg11_auth.backends.TG11Backend",
+]
+LOGIN_URL = "/auth/tg11/login/"
+LOGIN_REDIRECT_URL = "/"
+
+TG11_OIDC_ISSUER = os.getenv("TG11_OIDC_ISSUER", "")
+TG11_OIDC_CLIENT_ID = os.getenv("TG11_OIDC_CLIENT_ID", "")
+TG11_OIDC_CLIENT_SECRET = os.getenv("TG11_OIDC_CLIENT_SECRET", "")
+TG11_OIDC_REDIRECT_URI = os.getenv("TG11_OIDC_REDIRECT_URI", "")
+TG11_OIDC_SCOPES = "openid profile email tg11.profile"
+TG11_APPLICATION = "foxpay"
+TG11_AUTH_AUTOLINK_VERIFIED_EMAIL = False
+TG11_AUTH_PROFILE_HOOK = "apps.accounts.identity.on_tg11_login"
+TG11_AUTH_LOGIN_GUARD = "apps.accounts.identity.guard_tg11_login"
+TG11_AUTH_LOGIN_REDIRECT = "/"
+TG11_AUTH_POST_LOGOUT_REDIRECT = "/"
+TG11_AUTH_ACCOUNT_URL = "/connections/"
+TG11_AUTH_BASE_TEMPLATE = "payments/base.html"
 
 SESSION_COOKIE_SECURE = env_bool("DJANGO_SESSION_COOKIE_SECURE", not DEBUG)
 CSRF_COOKIE_SECURE = env_bool("DJANGO_CSRF_COOKIE_SECURE", not DEBUG)

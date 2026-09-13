@@ -46,7 +46,7 @@ https://foxpay.fyi/api/v1/webhooks/square/vulpfin/square-primary/
 ```
 
 Run `configure_square_webhook_provider --merchant vulpfin --environment live`
-to create the inactive, webhook-only provider before saving the subscription.
+to create the inactive receiver before saving the subscription.
 Select `payment.created` and `payment.updated`; add `refund.created` and
 `refund.updated` when tracking Square refunds. Square displays the subscription
 Signature Key after it is saved. Put it in `SQUARE_WEBHOOK_SIGNATURE_KEY` in the
@@ -57,10 +57,11 @@ its trailing slash, because Square signs the URL together with the raw body.
 
 The Square receiver returns 503 for POST until the signature key is configured.
 Afterward it verifies `x-square-hmacsha256-signature`, deduplicates `event_id`,
-and records a minimal event summary without card details. It does not yet
-create Square checkouts, correlate Square payment IDs to Fox Pay attempts, or
-settle Fox Pay payment intents. A separate Square payment adapter is required
-before Square can be offered as a checkout route.
+and records a minimal event summary without card details. When Square hosted
+checkout is active, it also reconciles `payment.created` and `payment.updated`
+for the exact order, location, amount, currency, and merchant. Unmatched or
+mismatched events never settle an intent. Other subscribed event types are only
+recorded; they do not mutate payment state.
 
 ## Outgoing Merchant Webhooks
 

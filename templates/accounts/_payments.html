@@ -1,0 +1,15 @@
+{% load foxpay_money %}
+{% if entries %}
+  <div class="table-scroll"><table class="account-table">
+    <thead><tr><th>{% if order_mode %}Order reference{% else %}Payment{% endif %}</th><th>Merchant</th><th>Status</th><th>Amount</th><th>Date</th></tr></thead>
+    <tbody>{% for payment in entries %}<tr>
+      <td><strong>{% if order_mode %}{{ payment.reference }}{% else %}{{ payment.description|default:payment.public_id }}{% endif %}</strong><small>{{ payment.public_id }}</small></td>
+      <td>{{ payment.merchant.name }}</td>
+      <td><span class="state-pill">{{ payment.get_status_display }}</span></td>
+      <td>{{ payment.amount|money:payment.currency }}</td>
+      <td>{{ payment.created_at|date:"M j, Y" }}</td>
+    </tr>{% endfor %}</tbody>
+  </table></div>
+{% else %}
+  <p class="empty-state">{% if order_mode %}No order-linked payments yet.{% else %}No payments yet.{% endif %}</p>
+{% endif %}

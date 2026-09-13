@@ -11,10 +11,18 @@
   <header class="topbar">
     <a class="brand" href="/">Fox Pay</a>
     <span class="product">VulpFin payments</span>
+    {% if user.is_authenticated %}
+      <nav class="topnav" aria-label="Account">
+        <a href="/">Account</a>
+        {% if user.is_staff %}<a href="{% url 'payments:dashboard' %}">Operations</a>{% endif %}
+        <a href="/connections/">Connections</a>
+      </nav>
+      <form method="post" action="{% url 'tg11_auth:logout' %}" class="topbar-logout">{% csrf_token %}<button type="submit" class="text-button">Sign out</button></form>
+    {% endif %}
   </header>
   <main class="shell">
+    {% if messages %}<div class="flash-stack" role="status">{% for message in messages %}<p class="flash">{{ message }}</p>{% endfor %}</div>{% endif %}
     {% block content %}{% endblock %}
   </main>
 </body>
 </html>
-

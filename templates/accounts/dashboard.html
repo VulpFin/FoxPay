@@ -1,0 +1,106 @@
+{% extends "payments/base.html" %}
+{% load foxpay_money %}
+
+{% block title %}Account - Fox Pay{% endblock %}
+
+{% block content %}
+<div class="account-heading">
+  <div>
+    <p class="eyebrow">Your account</p>
+    <h1>{% if section == "overview" %}Overview{% elif section == "payments" %}Payments{% elif section == "orders" %}Orders{% elif section == "subscriptions" %}Subscriptions{% elif section == "methods" %}Payment methods{% else %}Connections{% endif %}</h1>
+  </div>
+  <span class="account-email">{{ user.email|default:user.username }}</span>
+</div>
+
+<nav class="account-tabs" aria-label="Account sections">
+  <a href="/" {% if section == "overview" %}aria-current="page"{% endif %}>Overview</a>
+  <a href="/payments/" {% if section == "payments" %}aria-current="page"{% endif %}>Payments</a>
+  <a href="/orders/" {% if section == "orders" %}aria-current="page"{% endif %}>Orders</a>
+  <a href="/subscriptions/" {% if section == "subscriptions" %}aria-current="page"{% endif %}>Subscriptions</a>
+  <a href="/payment-methods/" {% if section == "methods" %}aria-current="page"{% endif %}>Payment methods</a>
+  <a href="/connections/" {% if section == "connections" %}aria-current="page"{% endif %}>Connections</a>
+</nav>
+
+{% if not subject and section != "connections" %}
+  <section class="notice">
+    <strong>Connect your TG11 account to see your Fox Pay records.</strong>
+    <a href="/connections/">Manage connections</a>
+  </section>
+{% endif %}
+
+{% if section == "overview" %}
+  <div class="metrics">
+    <div><span>Payments</span><strong>{{ payment_count }}</strong></div>
+    <div><span>Subscriptions</span><strong>{{ subscription_count }}</strong></div>
+    <div><span>Payment methods</span><strong>{{ method_count }}</strong></div>
+  </div>
+  <section class="account-section">
+    <div class="section-heading"><h2>Recent payments</h2><a href="/payments/">View all</a></div>
+    {% include "accounts/_payments.html" with entries=payments %}
+  </section>
+{% elif section == "payments" %}
+  <section class="account-section">
+    {% include "accounts/_payments.html" with entries=payments %}
+  </section>
+{% elif section == "orders" %}
+  <section class="account-section">
+    {% include "accounts/_payments.html" with entries=orders order_mode=True %}
+  </section>
+{% elif section == "subscriptions" %}
+  <section class="account-section">
+    {% if subscriptions %}
+      <div class="table-scroll"><table class="account-table">
+        <thead><tr><th>Plan</th><th>Merchant</th><th>Status</th><th>Amount</th><th>Period ends</th></tr></thead>
+        <tbody>{% for subscription in subscriptions %}<tr>
+          <td><strong>{{ subscription.plan_name }}</strong><small>{{ subscription.provider }}</small></td>
+          <td>{{ subscription.merchant.name }}</td>
+          <td><span class="state-pill">{{ subscription.status|title }}</span>{% if subscription.cancel_at_period_end %}<small>Ends this period</small>{% endif %}</td>
+          <td>{{ subscription.amount|money:subscription.currency }}</td>
+          <td>{{ subscription.current_period_end|date:"M j, Y"|default:"-" }}</td>
+        </tr>{% endfor %}</tbody>
+      </table></div>
+    {% else %}<p class="empty-state">No connected subscriptions.</p>{% endif %}
+  </section>
+{% elif section == "methods" %}
+  <section class="account-section">
+    {% if setup_providers %}<div class="method-actions">
+      {% for provider in setup_providers %}
+        <form method="post" action="{% url 'account_add_payment_method' provider.merchant.slug provider.provider %}">{% csrf_token %}
+          <button type="submit">Add card for {{ provider.merchant.name }}</button>
+        </form>
+      {% endfor %}
+    </div>{% endif %}
+    {% if methods %}
+      <div class="method-grid">{% for method in methods %}
+        <article class="method-item">
+          <div><span class="method-brand">{{ method.display_metadata.brand|default:method.type|title }}</span><strong>Ending in {{ method.display_metadata.last4|default:"----" }}</strong></div>
+          <span>{{ method.merchant.name }}</span>
+          {% if method.display_metadata.exp_month and method.display_metadata.exp_year %}<small>Expires {{ method.display_metadata.exp_month }}/{{ method.display_metadata.exp_year }}</small>{% endif %}
+          {% if method.provider_config.adapter == "stripe" or method.provider_config.adapter == "stripe_checkout" %}
+            <form method="post" action="{% url 'account_remove_payment_method' method.uuid %}">{% csrf_token %}<button type="submit" class="secondary">Remove</button></form>
+          {% endif %}
+        </article>
+      {% endfor %}</div>
+    {% else %}<p class="empty-state">No saved payment methods.</p>{% endif %}
+  </section>
+{% else %}
+  <section class="account-section connection-section">
+    <div class="section-heading"><h2>TG11 account</h2><span class="state-pill">{% if subject %}Connected{% else %}Not connected{% endif %}</span></div>
+    {% if subject %}
+      <p class="connection-id">{{ subject }}</p>
+      {% if user.has_usable_password %}
+        <form method="post" action="{% url 'tg11_auth:unlink' %}">{% csrf_token %}<input type="hidden" name="next" value="/connections/"><button type="submit" class="secondary">Unlink TG11</button></form>
+      {% else %}
+        <p class="muted">TG11 is your only sign-in method, so it cannot be unlinked here.</p>
+      {% endif %}
+    {% elif tg11_configured %}
+      <a class="button-link" href="{% url 'tg11_auth:link' %}?next=/connections/">Link TG11 account</a>
+    {% endif %}
+  </section>
+  <section class="account-section connection-section">
+    <div class="section-heading"><h2>Connected merchants</h2></div>
+    {% for customer in customers %}<div class="connection-row"><strong>{{ customer.merchant.name }}</strong><span>Customer account</span></div>{% empty %}<p class="empty-state">No merchant accounts connected.</p>{% endfor %}
+    {% for membership in memberships %}<div class="connection-row"><strong>{{ membership.merchant.name }}</strong><span>{{ membership.get_role_display }}</span></div>{% endfor %}
+  </section>
+{% endif %}
+{% endblock %}

@@ -5,7 +5,7 @@ import hmac
 from django.db import transaction
 from django.utils import timezone
 
-from apps.payments.models import ProviderEvent, WebhookDelivery
+from apps.payments.models import PaymentAttempt, ProviderEvent, WebhookDelivery
 
 
 def verify_square_signature(body, signature, signature_key, notification_url):
@@ -70,3 +70,46 @@ def record_square_event(config, event):
             processed=True,
         )
     return created
+
+
+def square_payment_update(config, event):
+    if event.get("type") not in {"payment.created", "payment.updated"}:
+        return None, ""
+    data = event.get("data") if isinstance(event.get("data"), dict) else {}
+    objects = data.get("object") if isinstance(data.get("object"), dict) else {}
+    payment = objects.get("payment") if isinstance(objects.get("payment"), dict) else {}
+    order_id = payment.get("order_id")
+    if not isinstance(order_id, str) or not order_id:
+        return None, ""
+    attempt = PaymentAttempt.objects.select_related("intent").filter(
+        provider_config=config,
+        provider_response_metadata__square_order_id=order_id,
+        intent__environment=config.environment,
+    ).first()
+    if not attempt:
+        return None, ""
+    if attempt.intent.merchant_id != config.merchant_id:
+        return None, "payment_details_mismatch"
+    amount = payment.get("total_money") if isinstance(payment.get("total_money"), dict) else {}
+    if (
+        payment.get("location_id") != attempt.provider_response_metadata.get("square_location_id")
+        or amount.get("amount") != attempt.amount
+        or amount.get("currency") != attempt.currency
+        or (config.settings.get("square_merchant_id") and event.get("merchant_id") != config.settings["square_merchant_id"])
+    ):
+        return None, "payment_details_mismatch"
+    status = {"COMPLETED": "succeeded", "FAILED": "failed", "CANCELED": "canceled"}.get(payment.get("status"))
+    if not status:
+        return None, ""
+    payment_id = payment.get("id")
+    if not isinstance(payment_id, str) or not payment_id:
+        return None, "payment_id_missing"
+    return {
+        "id": event["event_id"],
+        "type": event["type"],
+        "payment_intent": attempt.intent.public_id,
+        "foxpay_attempt_id": str(attempt.id),
+        "foxpay_method": PaymentAttempt.METHOD_CARD,
+        "status": status,
+        "provider_reference": payment_id,
+    }, ""

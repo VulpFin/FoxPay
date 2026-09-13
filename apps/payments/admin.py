@@ -21,8 +21,10 @@ from .models import (
     PaymentMethodReference,
     ProviderConfig,
     ProviderCredential,
+    ProviderCustomerReference,
     ProviderEvent,
     Refund,
+    SubscriptionReference,
     WebhookDelivery,
 )
 
@@ -94,14 +96,27 @@ class PaymentAttemptAdmin(admin.ModelAdmin):
 
 @admin.register(Customer)
 class CustomerAdmin(admin.ModelAdmin):
-    list_display = ("merchant", "external_id", "email", "name", "created_at")
-    search_fields = ("merchant__name", "external_id", "email", "name")
+    list_display = ("merchant", "external_id", "tg11_user_uuid", "email", "name", "created_at")
+    search_fields = ("merchant__name", "external_id", "tg11_user_uuid", "email", "name")
 
 
 @admin.register(PaymentMethodReference)
 class PaymentMethodReferenceAdmin(admin.ModelAdmin):
     list_display = ("merchant", "customer", "provider", "type", "created_at")
     search_fields = ("merchant__name", "customer__email", "provider", "provider_reference", "fingerprint")
+
+
+@admin.register(ProviderCustomerReference)
+class ProviderCustomerReferenceAdmin(admin.ModelAdmin):
+    list_display = ("provider_config", "customer", "provider_reference", "created_at")
+    search_fields = ("provider_config__provider", "customer__email", "provider_reference")
+
+
+@admin.register(SubscriptionReference)
+class SubscriptionReferenceAdmin(admin.ModelAdmin):
+    list_display = ("merchant", "customer", "provider", "plan_name", "status", "current_period_end")
+    list_filter = ("provider", "status")
+    search_fields = ("merchant__name", "customer__email", "provider_reference", "plan_name")
 
 
 @admin.register(IdempotencyRecord)

@@ -67,14 +67,28 @@ Supported incoming Stripe events:
 Fox Pay verifies the `Stripe-Signature` header against the encrypted
 `webhook_secret` credential before normalizing the event.
 
-## Square Webhook Receiver
+Set `allow_customer_method_setup: true` in a merchant's Stripe provider
+settings to allow signed-in TG11 customers to save cards through Stripe-hosted
+setup Checkout. The same signed webhook records masked card references. Card
+removal requires a recent TG11 MFA sign-in and is blocked while that customer
+has an active subscription reference.
 
-Square has a signed, webhook-only receiver at
-`https://foxpay.fyi/api/v1/webhooks/square/vulpfin/square-primary/`. Use
-`configure_square_webhook_provider` to create its inactive provider config and
-store the Square subscription Signature Key after the subscription is saved.
-See [WEBHOOKS.md](WEBHOOKS.md) for setup and current limitations. This does not
-activate Square checkout or refunds.
+## Square Hosted Checkout
+
+Square uses a hosted payment link created by the Checkout API, so FoxPay does
+not handle card entry. First run `configure_square_webhook_provider` to store
+the subscription signing key. Then set `SQUARE_ACCESS_TOKEN` and run:
+
+```text
+python manage.py configure_square_checkout_provider --merchant vulpfin --environment live --location-id LOCATION_ID --square-merchant-id MERCHANT_ID
+```
+
+The access token is encrypted into `ProviderCredential`. Add `--activate` only
+after confirming the token, location, and signed webhook all match. FoxPay
+offers Square alongside other active card providers. Signed `payment.created`
+and `payment.updated` events can settle only attempts matching the Square order
+ID, location, amount, currency, and merchant ID. Refunds remain unavailable
+through the FoxPay API. See [WEBHOOKS.md](WEBHOOKS.md).
 
 ## NOWPayments Hosted Crypto
 
@@ -103,6 +117,7 @@ the optional `--pay-currency` setting.
 
 - `mock`: local card/debit sandbox checkout.
 - `stripe`: creates Stripe-hosted Checkout Sessions for card and debit card payment.
+- `square`: creates Square-hosted payment links and reconciles signed payment events.
 - `hosted`: redirects to a configured hosted card checkout URL.
 - `manual`: non-custodial crypto invoice to merchant wallet addresses.
 - `nowpayments`: creates hosted crypto invoices and verifies signed IPNs.

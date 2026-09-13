@@ -1,0 +1,15 @@
+{% extends "payments/base.html" %}
+
+{% block title %}Confirm your identity - Fox Pay{% endblock %}
+
+{% block content %}
+<section class="signin">
+  <p class="eyebrow">Security check</p>
+  <h1>Confirm your identity</h1>
+  <p class="lead">Managing saved cards requires a recent TG11 sign-in with two-factor authentication.</p>
+  <div class="actions">
+    <a class="button-link" href="{% url 'tg11_auth:login' %}?force=1&amp;prompt=login&amp;next=/payment-methods/">Sign in again</a>
+    <a class="button-link outline" href="https://accounts.tg11.org/security">TG11 security</a>
+  </div>
+</section>
+{% endblock %}

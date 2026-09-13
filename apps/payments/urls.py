@@ -6,11 +6,12 @@ from . import views
 app_name = "payments"
 
 urlpatterns = [
-    path("", views.dashboard, name="dashboard"),
+    path("operations/", views.dashboard, name="dashboard"),
     path("api/v1/openapi.json", views.openapi, name="openapi"),
     path("api/v1/payment-intents/", views.payment_intents, name="payment_intents"),
     path("api/v1/payment-intents/<str:public_id>/", views.payment_intent_detail, name="payment_intent_detail"),
     path("api/v1/payment-intents/<str:public_id>/refunds/", views.refunds, name="refunds"),
+    path("api/v1/subscription-references/", views.subscription_references, name="subscription_references"),
     path("api/v1/webhooks/crypto/<str:provider>/", views.crypto_webhook, name="crypto_webhook"),
     path("api/v1/webhooks/stripe/", views.stripe_webhook, name="stripe_webhook"),
     path("api/v1/webhooks/stripe/<str:provider>/", views.stripe_webhook, name="stripe_webhook_provider"),

@@ -1,3 +1,5 @@
+import uuid
+
 from django.conf import settings
 from django.core.cache import cache
 from django.core.exceptions import ImproperlyConfigured
@@ -135,6 +137,42 @@ def get_or_create_customer(merchant, payload):
     if not isinstance(customer_payload, dict):
         raise APIError("customer must be an object.")
     external_id = customer_payload.get("external_id", "")
+    if not isinstance(external_id, str) or len(external_id) > 160:
+        raise APIError("customer.external_id must be a string of at most 160 characters.")
+    subject_value = customer_payload.get("tg11_user_uuid")
+    if subject_value:
+        try:
+            subject = uuid.UUID(str(subject_value))
+        except (TypeError, ValueError):
+            raise APIError("customer.tg11_user_uuid must be a valid UUID.")
+        by_external = Customer.objects.filter(merchant=merchant, external_id=external_id).first() if external_id else None
+        by_subject = Customer.objects.filter(merchant=merchant, tg11_user_uuid=subject).first()
+        if by_external and by_subject and by_external.pk != by_subject.pk:
+            raise APIError("Customer identifiers are already linked to different accounts.", status=409)
+        customer = by_external or by_subject
+        if customer:
+            if customer.tg11_user_uuid and customer.tg11_user_uuid != subject:
+                raise APIError("Customer is already linked to a different TG11 account.", status=409)
+            if external_id and customer.external_id and customer.external_id != external_id:
+                raise APIError("TG11 account is already linked to a different customer identifier.", status=409)
+            customer.tg11_user_uuid = subject
+            if external_id:
+                customer.external_id = external_id
+            for field in ("email", "name"):
+                if field in customer_payload:
+                    setattr(customer, field, customer_payload[field])
+            if "metadata" in customer_payload:
+                customer.metadata = validate_metadata(customer_payload["metadata"] or {})
+            customer.save()
+            return customer
+        return Customer.objects.create(
+            merchant=merchant,
+            external_id=external_id,
+            tg11_user_uuid=subject,
+            email=customer_payload.get("email", ""),
+            name=customer_payload.get("name", ""),
+            metadata=validate_metadata(customer_payload.get("metadata") or {}),
+        )
     if external_id:
         customer, _ = Customer.objects.update_or_create(
             merchant=merchant,
