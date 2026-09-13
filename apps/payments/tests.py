@@ -415,6 +415,23 @@ class PaymentIntentAPITests(TestCase):
         intent.refresh_from_db()
         self.assertEqual(intent.status, PaymentIntent.STATUS_SUCCEEDED)
 
+    def test_manual_capture_is_rejected_before_creating_provider_session(self):
+        response = self.client.post(
+            reverse("payments:payment_intents"),
+            data=json.dumps({
+                "amount": 1000,
+                "currency": "USD",
+                "payment_methods": ["card"],
+                "capture_strategy": "manual",
+            }),
+            content_type="application/json",
+            HTTP_X_FOXPAY_KEY=self.raw_key,
+        )
+
+        self.assertEqual(response.status_code, 501)
+        self.assertEqual(response.json()["error"]["code"], "manual_capture_unavailable")
+        self.assertFalse(PaymentIntent.objects.exists())
+
     def test_expiring_one_card_option_keeps_another_available(self):
         intent = PaymentIntent.objects.create(merchant=self.merchant, amount=1000, currency="USD")
         primary = intent.attempts.create(

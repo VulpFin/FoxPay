@@ -46,6 +46,10 @@ Example body:
 }
 ```
 
+Only automatic capture is currently supported. Requests with
+`capture_strategy: "manual"` return `501 manual_capture_unavailable` before any
+provider session is created.
+
 ## Retrieve Payment Intent
 
 `GET /api/v1/payment-intents/{id}/`

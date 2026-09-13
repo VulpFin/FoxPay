@@ -194,6 +194,14 @@ def create_payment_intent(request, merchant, payload, idempotency_key=""):
         raise APIError("currency must be a three-letter ISO currency code.")
 
     payment_methods = clean_payment_methods(payload.get("payment_methods"))
+    capture_strategy = payload.get("capture_strategy", PaymentIntent.CAPTURE_AUTOMATIC)
+    if capture_strategy != PaymentIntent.CAPTURE_AUTOMATIC:
+        raise APIError(
+            "Manual capture is not available through Fox Pay yet.",
+            status=501,
+            type="unsupported_operation",
+            code="manual_capture_unavailable",
+        )
     metadata = validate_metadata(payload.get("metadata") or {})
     customer = get_or_create_customer(merchant, payload)
     intent = PaymentIntent.objects.create(
@@ -204,7 +212,7 @@ def create_payment_intent(request, merchant, payload, idempotency_key=""):
         description=payload.get("description", ""),
         requested_payment_methods=payment_methods,
         environment=settings.FOXPAY_ENV,
-        capture_strategy=payload.get("capture_strategy", PaymentIntent.CAPTURE_AUTOMATIC),
+        capture_strategy=capture_strategy,
         statement_descriptor=payload.get("statement_descriptor", ""),
         reference=payload.get("reference", ""),
         expires_at=payload.get("expires_at") or None,

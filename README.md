@@ -59,6 +59,7 @@ Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:8000/api/v1/payment-intent
 ```
 
 The response includes `foxpay_checkout_url`. Redirect the customer there to show all available Fox Pay payment options.
+Automatic capture is currently required; manual capture requests return `501`.
 
 ## Refund a payment intent
 
