@@ -28,4 +28,12 @@ fi
 
 systemctl restart "$SERVICE_NAME"
 systemctl --no-pager --full status "$SERVICE_NAME"
-curl --fail --silent --show-error --max-time 10 http://127.10.0.11:8000/healthz/
+for attempt in $(seq 1 15); do
+  if curl --fail --silent --show-error --max-time 10 -H "Host: foxpay.fyi" http://127.10.0.11:8000/healthz/; then
+    exit 0
+  fi
+  sleep 1
+done
+
+echo "FoxPay health check did not pass after restart." >&2
+exit 1
