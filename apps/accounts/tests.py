@@ -118,7 +118,9 @@ class SavedMethodViewTests(TestCase):
 
     def test_add_card_requires_recent_mfa(self):
         path = "/payment-methods/add/vulpfin/stripe-primary/"
-        self.assertEqual(self.client.post(path).status_code, 403)
+        response = self.client.post(path)
+        self.assertEqual(response.status_code, 403)
+        self.assertContains(response, "https://accounts.tg11.org/account/security", status_code=403)
         self.authenticate_recently()
         with patch("apps.accounts.views.create_setup_checkout", return_value="https://checkout.stripe.com/c/pay/test"):
             response = self.client.post(path)

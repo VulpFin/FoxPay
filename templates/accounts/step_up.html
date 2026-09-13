@@ -6,10 +6,10 @@
 <section class="signin">
   <p class="eyebrow">Security check</p>
   <h1>Confirm your identity</h1>
-  <p class="lead">Managing saved cards requires a recent TG11 sign-in with two-factor authentication.</p>
+  <p class="lead">Managing saved cards requires a recent TG11 sign-in with two-factor authentication. After signing in, choose Add card again.</p>
   <div class="actions">
     <a class="button-link" href="{% url 'tg11_auth:login' %}?force=1&amp;prompt=login&amp;next=/payment-methods/">Sign in again</a>
-    <a class="button-link outline" href="https://accounts.tg11.org/security">TG11 security</a>
+    <a class="button-link outline" href="https://accounts.tg11.org/account/security">Set up two-factor</a>
   </div>
 </section>
 {% endblock %}
