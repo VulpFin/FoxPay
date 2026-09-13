@@ -1,0 +1,45 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: foxpay
+      POSTGRES_USER: foxpay
+      POSTGRES_PASSWORD: foxpay_dev_password
+    volumes:
+      - foxpay_postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U foxpay -d foxpay"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  web:
+    build: .
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DJANGO_SECRET_KEY: change-me-before-production
+      DJANGO_DEBUG: "1"
+      DJANGO_ALLOWED_HOSTS: 127.0.0.1,localhost
+      DATABASE_URL: postgres://foxpay:foxpay_dev_password@db:5432/foxpay
+      FOXPAY_ENV: test
+      FOXPAY_CARD_PROVIDER: mock
+      FOXPAY_CRYPTO_PROVIDER: manual
+      FOXPAY_WEBHOOK_SECRET: change-me-for-provider-webhooks
+      SENTRY_DSN: https://f1558d3a7234288b3fc82fa1fcc2dbc8@o4511250973196288.ingest.us.sentry.io/4511311303933952
+      SENTRY_ENVIRONMENT: docker-dev
+      SENTRY_TRACES_SAMPLE_RATE: "0.05"
+      SENTRY_SEND_DEFAULT_PII: "0"
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - python -c "import json, urllib.request; data=json.load(urllib.request.urlopen('http://127.0.0.1:8000/healthz/', timeout=5)); assert data['status'] == 'ok'"
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+volumes:
+  foxpay_postgres:

@@ -1,0 +1,20 @@
+{% load static %}
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Fox Pay{% endblock %}</title>
+  <link rel="stylesheet" href="{% static 'foxpay/app.css' %}">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/">Fox Pay</a>
+    <span class="product">VulpFin payments</span>
+  </header>
+  <main class="shell">
+    {% block content %}{% endblock %}
+  </main>
+</body>
+</html>
+

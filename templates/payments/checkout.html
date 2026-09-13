@@ -1,0 +1,28 @@
+{% extends "payments/base.html" %}
+
+{% block title %}Pay with Fox Pay{% endblock %}
+
+{% block content %}
+<section class="checkout">
+  <div>
+    <p class="eyebrow">Fox Pay checkout</p>
+    <h1>{{ intent.merchant.name }}</h1>
+    <p class="amount">{{ intent.currency }} {{ intent.amount }}</p>
+    {% if intent.description %}<p class="description">{{ intent.description }}</p>{% endif %}
+  </div>
+
+  <div class="panel option-list">
+    {% for attempt in attempts %}
+      <a class="pay-option" href="{{ attempt.checkout_url }}">
+        <span>
+          <strong>{{ attempt.method|title }}</strong>
+          <small>{{ attempt.provider }}</small>
+        </span>
+        <span class="status">{{ attempt.status }}</span>
+      </a>
+    {% empty %}
+      <p>No payment methods are available for this payment.</p>
+    {% endfor %}
+  </div>
+</section>
+{% endblock %}

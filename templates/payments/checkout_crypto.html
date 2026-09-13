@@ -1,0 +1,44 @@
+{% extends "payments/base.html" %}
+
+{% block title %}Crypto checkout - Fox Pay{% endblock %}
+
+{% block content %}
+<section class="checkout">
+  <div>
+    <p class="eyebrow">Crypto checkout</p>
+    <h1>{{ intent.merchant.name }}</h1>
+    <p class="amount">{{ intent.currency }} {{ intent.amount }}</p>
+    {% if attempt %}<p class="description">Provider: {{ attempt.provider }}</p>{% endif %}
+    {% if intent.description %}<p class="description">{{ intent.description }}</p>{% endif %}
+  </div>
+
+  <div class="panel">
+    {% if invoice %}
+      <dl class="details">
+        <div>
+          <dt>Asset</dt>
+          <dd>{{ invoice.asset }}</dd>
+        </div>
+        <div>
+          <dt>Network</dt>
+          <dd>{{ invoice.network }}</dd>
+        </div>
+        <div>
+          <dt>Address</dt>
+          <dd class="mono">{% if invoice.address %}{{ invoice.address }}{% else %}Not configured{% endif %}</dd>
+        </div>
+        <div>
+          <dt>Crypto amount</dt>
+          <dd>{% if invoice.amount_decimal %}{{ invoice.amount_decimal }} {{ invoice.asset }}{% else %}Quote pending{% endif %}</dd>
+        </div>
+        <div>
+          <dt>Expires</dt>
+          <dd>{% if invoice.expires_at %}{{ invoice.expires_at }}{% else %}No expiry{% endif %}</dd>
+        </div>
+      </dl>
+    {% else %}
+      <p>No crypto invoice exists for this payment intent.</p>
+    {% endif %}
+  </div>
+</section>
+{% endblock %}

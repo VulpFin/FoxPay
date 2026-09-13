@@ -1,0 +1,24 @@
+{% extends "payments/base.html" %}
+
+{% block title %}Card checkout - Fox Pay{% endblock %}
+
+{% block content %}
+<section class="checkout">
+  <div>
+    <p class="eyebrow">Card checkout</p>
+    <h1>{{ intent.merchant.name }}</h1>
+    <p class="amount">{{ intent.currency }} {{ intent.amount }}</p>
+    {% if attempt %}<p class="description">Provider: {{ attempt.provider }}</p>{% endif %}
+    {% if intent.description %}<p class="description">{{ intent.description }}</p>{% endif %}
+  </div>
+
+  <form method="post" class="panel">
+    {% csrf_token %}
+    <p>This development checkout simulates a hosted card provider. Production card entry should be handled by a PCI-compliant acquirer page or hosted fields provider.</p>
+    <div class="actions">
+      <button type="submit" name="action" value="approve">Approve test payment</button>
+      <button type="submit" name="action" value="fail" class="secondary">Fail test payment</button>
+    </div>
+  </form>
+</section>
+{% endblock %}

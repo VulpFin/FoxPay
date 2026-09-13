@@ -1,0 +1,50 @@
+{% extends "payments/base.html" %}
+
+{% block title %}Dashboard - Fox Pay{% endblock %}
+
+{% block content %}
+<section class="dashboard">
+  <div class="dashboard-head">
+    <div>
+      <p class="eyebrow">Operations</p>
+      <h1>Fox Pay dashboard</h1>
+    </div>
+    <a href="/admin/" class="button-link">Admin</a>
+  </div>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Intent</th>
+        <th>Merchant</th>
+        <th>Status</th>
+        <th>Amount</th>
+        <th>Options</th>
+        <th>Created</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for intent in intents %}
+        <tr>
+          <td class="mono">{{ intent.public_id }}</td>
+          <td>{{ intent.merchant.name }}</td>
+          <td><span class="status">{{ intent.status }}</span></td>
+          <td>{{ intent.currency }} {{ intent.amount }}</td>
+          <td>
+            {% for attempt in intent.attempts.all %}
+              <span class="method">{{ attempt.method }}: {{ attempt.provider }}</span>
+            {% empty %}
+              -
+            {% endfor %}
+          </td>
+          <td>{{ intent.created_at }}</td>
+        </tr>
+      {% empty %}
+        <tr>
+          <td colspan="6" class="empty">No payment intents yet.</td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}
