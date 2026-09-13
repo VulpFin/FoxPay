@@ -315,8 +315,8 @@ class PaymentIntent(TimeStampedModel):
     statement_descriptor = models.CharField(max_length=120, blank=True)
     reference = models.CharField(max_length=160, blank=True)
     expires_at = models.DateTimeField(blank=True, null=True)
-    success_url = models.URLField(blank=True)
-    cancel_url = models.URLField(blank=True)
+    success_url = models.URLField(max_length=1000, blank=True)
+    cancel_url = models.URLField(max_length=1000, blank=True)
     metadata = models.JSONField(default=dict, blank=True)
 
     class Meta:
@@ -382,7 +382,7 @@ class PaymentAttempt(TimeStampedModel):
     provider_response_metadata = models.JSONField(default=dict, blank=True)
     failure_code = models.CharField(max_length=80, blank=True)
     failure_category = models.CharField(max_length=80, blank=True)
-    checkout_url = models.URLField(blank=True)
+    checkout_url = models.URLField(max_length=1000, blank=True)
     instructions = models.TextField(blank=True)
 
     def __str__(self):
