@@ -1,4 +1,5 @@
 {% extends "payments/base.html" %}
+{% load foxpay_money %}
 
 {% block title %}Dashboard - Fox Pay{% endblock %}
 
@@ -29,7 +30,7 @@
           <td class="mono">{{ intent.public_id }}</td>
           <td>{{ intent.merchant.name }}</td>
           <td><span class="status">{{ intent.status }}</span></td>
-          <td>{{ intent.currency }} {{ intent.amount }}</td>
+          <td>{{ intent.amount|money:intent.currency }}</td>
           <td>
             {% for attempt in intent.attempts.all %}
               <span class="method">{{ attempt.method }}: {{ attempt.provider }}</span>

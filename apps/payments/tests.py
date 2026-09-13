@@ -15,6 +15,7 @@ from django.urls import reverse
 from .adapters.nowpayments import canonical_ipn
 from .adapters.square_webhooks import verify_square_signature
 from .adapters.square_checkout import SquareCheckoutAdapter
+from .adapters.paypal_checkout import PayPalCheckoutAdapter, capture_amount, minor_to_value
 from .adapters.stripe_methods import create_setup_checkout, detach_saved_method, record_setup_checkout
 from .ledger import transaction_balances
 from .services import record_webhook
@@ -1044,3 +1045,170 @@ class StripeSavedMethodTests(TestCase):
         with patch("apps.payments.adapters.stripe_methods.stripe_module", return_value=self.stripe):
             self.assertFalse(record_setup_checkout(self.config, event))
         self.assertEqual(PaymentMethodReference.objects.count(), 0)
+
+
+@override_settings(FOXPAY_ENV="live", PAYPAL_CLIENT_ID="", PAYPAL_CLIENT_SECRET="", PAYPAL_WEBHOOK_ID="")
+class PayPalCheckoutTests(TestCase):
+    def setUp(self):
+        user = get_user_model().objects.create_user(username="paypal-owner@example.com")
+        self.merchant = Merchant.objects.create(owner=user, name="VulpFin", slug="vulpfin")
+        self.url = reverse("payments:paypal_webhook", args=["vulpfin", "paypal-primary"])
+
+    def configure(self, webhook_id="WH-TEST-1", provider="paypal-primary"):
+        env = {
+            "PAYPAL_CLIENT_ID": "paypal-test-client",
+            "PAYPAL_CLIENT_SECRET": "paypal-test-secret",
+            "PAYPAL_WEBHOOK_ID": webhook_id,
+        }
+        with patch.dict("os.environ", env):
+            call_command(
+                "configure_paypal_provider",
+                merchant="vulpfin",
+                provider=provider,
+                environment="live",
+                paypal_env="live",
+                activate=True,
+                stdout=StringIO(),
+            )
+        return ProviderConfig.objects.get(provider=provider)
+
+    def paid_order(self, intent, attempt, value="25.00", currency="USD"):
+        return {
+            "id": "PAYPAL-ORDER-1",
+            "status": "COMPLETED",
+            "purchase_units": [{
+                "custom_id": intent.public_id,
+                "invoice_id": f"{intent.public_id}:{attempt.id}",
+                "payments": {"captures": [{
+                    "id": "CAPTURE-1",
+                    "status": "COMPLETED",
+                    "amount": {"currency_code": currency, "value": value},
+                }]},
+            }],
+        }
+
+    def intent_and_attempt(self, config, amount=2500, currency="USD"):
+        intent = PaymentIntent.objects.create(merchant=self.merchant, amount=amount, currency=currency)
+        attempt = PaymentAttempt.objects.create(
+            intent=intent,
+            provider_config=config,
+            method=PaymentAttempt.METHOD_CARD,
+            rail=PaymentAttempt.METHOD_CARD,
+            provider=config.provider,
+            status=PaymentAttempt.STATUS_PENDING,
+            amount=intent.amount,
+            currency=intent.currency,
+        )
+        return intent, attempt
+
+    def approval_event(self, intent, attempt, event_id="WH-EVT-1"):
+        return {
+            "id": event_id,
+            "event_type": "CHECKOUT.ORDER.APPROVED",
+            "resource": {
+                "id": "PAYPAL-ORDER-1",
+                "purchase_units": [{"custom_id": intent.public_id, "invoice_id": f"{intent.public_id}:{attempt.id}"}],
+            },
+        }
+
+    def post(self, event):
+        return self.client.post(self.url, data=json.dumps(event), content_type="application/json")
+
+    def test_credentials_are_stored_encrypted_and_the_receiver_reports_ready(self):
+        config = self.configure()
+        self.assertTrue(config.is_active)
+        self.assertEqual(config.settings["paypal_env"], "live")
+        credential = config.credentials.get(name="client_secret")
+        self.assertNotIn("paypal-test-secret", credential.encrypted_value)
+        self.assertEqual(credential.reveal_secret(), "paypal-test-secret")
+        self.assertEqual(self.client.get(self.url).json(), {"receiver": "paypal", "ready": True})
+
+    def test_unknown_provider_and_missing_webhook_id_are_refused(self):
+        self.assertEqual(self.post({"id": "x", "event_type": "y"}).status_code, 404)
+        self.configure(webhook_id="")
+        self.assertFalse(self.client.get(self.url).json()["ready"])
+        response = self.post({"id": "x", "event_type": "y"})
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.json()["error"]["code"], "provider_not_configured")
+        self.assertEqual(WebhookDelivery.objects.count(), 0)
+
+    def test_an_event_paypal_will_not_vouch_for_is_refused(self):
+        self.configure()
+        with patch.object(PayPalCheckoutAdapter, "verify_webhook", return_value=False):
+            response = self.post({"id": "WH-EVT-9", "event_type": "PAYMENT.CAPTURE.COMPLETED"})
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(WebhookDelivery.objects.count(), 0)
+        self.assertEqual(ProviderEvent.objects.count(), 0)
+
+    def test_an_approved_order_is_captured_and_settles_the_intent(self):
+        config = self.configure()
+        intent, attempt = self.intent_and_attempt(config)
+        with patch.object(PayPalCheckoutAdapter, "verify_webhook", return_value=True):
+            with patch.object(PayPalCheckoutAdapter, "capture", return_value=self.paid_order(intent, attempt)) as capture:
+                response = self.post(self.approval_event(intent, attempt))
+        capture.assert_called_once_with("PAYPAL-ORDER-1")
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["captured"])
+        intent.refresh_from_db()
+        attempt.refresh_from_db()
+        self.assertEqual(intent.status, PaymentIntent.STATUS_SUCCEEDED)
+        self.assertEqual(attempt.status, PaymentAttempt.STATUS_SUCCEEDED)
+        self.assertEqual(attempt.provider_reference, "CAPTURE-1")
+
+    def test_a_capture_for_the_wrong_amount_does_not_settle_the_intent(self):
+        from .models import AuditLog
+
+        config = self.configure()
+        intent, attempt = self.intent_and_attempt(config)
+        with patch.object(PayPalCheckoutAdapter, "verify_webhook", return_value=True):
+            with patch.object(PayPalCheckoutAdapter, "capture", return_value=self.paid_order(intent, attempt, value="5.00")):
+                response = self.post(self.approval_event(intent, attempt))
+        self.assertEqual(response.status_code, 200)
+        intent.refresh_from_db()
+        attempt.refresh_from_db()
+        self.assertNotEqual(intent.status, PaymentIntent.STATUS_SUCCEEDED)
+        self.assertNotEqual(attempt.status, PaymentAttempt.STATUS_SUCCEEDED)
+        self.assertTrue(AuditLog.objects.filter(action="paypal.webhook.amount_mismatch").exists())
+
+    def test_the_same_capture_event_only_settles_once(self):
+        config = self.configure()
+        intent, attempt = self.intent_and_attempt(config)
+        event = {
+            "id": "WH-EVT-CAP-1",
+            "event_type": "PAYMENT.CAPTURE.COMPLETED",
+            "resource": {
+                "id": "CAPTURE-1",
+                "custom_id": intent.public_id,
+                "invoice_id": f"{intent.public_id}:{attempt.id}",
+                "amount": {"currency_code": "USD", "value": "25.00"},
+            },
+        }
+        with patch.object(PayPalCheckoutAdapter, "verify_webhook", return_value=True):
+            first = self.post(event)
+            second = self.post(event)
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(second.status_code, 200)
+        self.assertEqual(ProviderEvent.objects.count(), 1)
+        self.assertEqual(WebhookDelivery.objects.count(), 2)
+        intent.refresh_from_db()
+        self.assertEqual(intent.status, PaymentIntent.STATUS_SUCCEEDED)
+
+    def test_amounts_cross_paypal_in_the_units_each_side_uses(self):
+        self.assertEqual(minor_to_value(2500, "USD"), "25.00")
+        self.assertEqual(minor_to_value(2500, "JPY"), "2500")
+        self.assertEqual(minor_to_value(250000, "HUF"), "2500")
+        self.assertEqual(minor_to_value(2500, "KRW"), "2500")
+        self.assertEqual(capture_amount({"amount": {"currency_code": "HUF", "value": "2500"}}), (250000, "HUF"))
+        self.assertEqual(capture_amount({"amount": {"currency_code": "KRW", "value": "2500"}}), (2500, "KRW"))
+
+    def test_capture_amounts_are_read_in_minor_units(self):
+        self.assertEqual(capture_amount({"amount": {"currency_code": "usd", "value": "25.00"}}), (2500, "USD"))
+        self.assertEqual(capture_amount({"amount": {"currency_code": "JPY", "value": "2500"}}), (2500, "JPY"))
+        self.assertEqual(capture_amount({"amount": {"currency_code": "USD", "value": "not-money"}}), (None, ""))
+        self.assertEqual(capture_amount({}), (None, ""))
+
+    def test_an_active_paypal_provider_needs_both_halves_of_its_credentials(self):
+        with patch.dict("os.environ", {"PAYPAL_CLIENT_ID": "only-the-id", "PAYPAL_CLIENT_SECRET": "", "PAYPAL_WEBHOOK_ID": ""}):
+            with self.assertRaises(CommandError):
+                call_command("configure_paypal_provider", merchant="vulpfin", environment="live", activate=True, stdout=StringIO())
+        self.assertFalse(ProviderConfig.objects.filter(provider="paypal-primary").exists())

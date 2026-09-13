@@ -15,6 +15,8 @@ from django.views.decorators.http import require_GET, require_http_methods, requ
 
 from .adapters.stripe_checkout import construct_stripe_event, normalize_stripe_event
 from .adapters.stripe_methods import record_setup_checkout
+from .adapters.base import ProviderAdapterError
+from .adapters.paypal_checkout import PayPalCheckoutAdapter, capture_amount
 from .adapters.nowpayments import ipn_attempt, normalize_ipn, provider_secret, validate_ipn_amount, verify_ipn
 from .adapters.square_webhooks import record_square_event, square_payment_update, verify_square_signature
 from .events import emit_event
@@ -360,6 +362,81 @@ def square_webhook(request, merchant_slug, provider):
     return JsonResponse({"received": True, "recorded": recorded, "reconciled": bool(update)})
 
 
+
+@csrf_exempt
+@require_http_methods(["GET", "POST"])
+def paypal_webhook(request, merchant_slug, provider):
+    config = ProviderConfig.objects.filter(
+        merchant__slug=merchant_slug,
+        environment=settings.FOXPAY_ENV,
+        kind=ProviderConfig.KIND_CARD,
+        adapter="paypal",
+        provider=provider,
+    ).first()
+    if not config:
+        return error_response("PayPal webhook provider not found.", 404, request_id=getattr(request, "request_id", ""), code="provider_not_found")
+    adapter = PayPalCheckoutAdapter(config)
+    if request.method == "GET":
+        return JsonResponse({"receiver": "paypal", "ready": bool(adapter.webhook_id())})
+    if not adapter.webhook_id():
+        return error_response("PayPal webhook id is not configured.", 503, request_id=getattr(request, "request_id", ""), code="provider_not_configured")
+    if not adapter.verify_webhook(request):
+        return error_response("Invalid PayPal webhook signature.", 401, request_id=getattr(request, "request_id", ""), type="authentication_error", code="invalid_signature")
+    try:
+        event = json.loads(request.body)
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return error_response("Invalid PayPal webhook JSON.", 400, request_id=getattr(request, "request_id", ""), code="invalid_event")
+    if (
+        not isinstance(event, dict)
+        or not isinstance(event.get("id"), str)
+        or not 0 < len(event["id"]) <= 160
+        or not isinstance(event.get("event_type"), str)
+        or not 0 < len(event["event_type"]) <= 120
+    ):
+        return error_response("PayPal webhook id and event_type are required.", 400, request_id=getattr(request, "request_id", ""), code="invalid_event")
+
+    normalized = adapter.normalize_webhook(event)
+    captured = False
+    if normalized.get("status") == "approved" and normalized.get("provider_reference"):
+        try:
+            order = adapter.capture(normalized["provider_reference"])
+        except (ProviderAdapterError, ImproperlyConfigured) as exc:
+            AuditLog.objects.create(
+                merchant=config.merchant,
+                action="paypal.webhook.capture_failed",
+                object_type="provider_event",
+                object_id=event["id"][:120],
+                metadata={"reason": str(exc)},
+            )
+            return error_response("PayPal capture could not be completed.", 503, request_id=getattr(request, "request_id", ""), code="capture_failed")
+        settlement = adapter.settlement_event(order, event_id=f"{event['id']}:capture")
+        if settlement:
+            captured = True
+            event = settlement
+            normalized = adapter.normalize_webhook(settlement)
+
+    with transaction.atomic():
+        if normalized.get("status") == "succeeded":
+            intent = PaymentIntent.objects.filter(public_id=normalized.get("payment_intent", "")).first()
+            minor, currency = capture_amount(event.get("resource") or {})
+            if intent and minor is not None and (minor != intent.amount or currency != (intent.currency or "").upper()):
+                AuditLog.objects.create(
+                    merchant=config.merchant,
+                    action="paypal.webhook.amount_mismatch",
+                    object_type="payment_intent",
+                    object_id=intent.public_id,
+                    metadata={
+                        "expected": intent.amount,
+                        "expected_currency": intent.currency,
+                        "seen": minor,
+                        "seen_currency": currency,
+                    },
+                )
+                normalized["status"] = "amount_mismatch"
+        delivery = record_webhook(f"paypal:{config.pk}", normalized)
+    return JsonResponse({"received": True, "processed": delivery.processed, "captured": captured})
+
+
 @staff_member_required
 def dashboard(request):
     intents = PaymentIntent.objects.select_related("merchant").prefetch_related("attempts").order_by("-created_at")[:50]
@@ -404,6 +481,9 @@ def openapi(request):
                 },
                 "/api/v1/webhooks/square/{merchant_slug}/{provider}/": {
                     "post": {"summary": "Record signed Square webhook events"}
+                },
+                "/api/v1/webhooks/paypal/{merchant_slug}/{provider}/": {
+                    "post": {"summary": "Capture and settle signed PayPal Orders v2 events"}
                 },
             },
         }

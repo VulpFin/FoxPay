@@ -1,4 +1,5 @@
 {% extends "payments/base.html" %}
+{% load foxpay_money %}
 
 {% block title %}Crypto checkout - Fox Pay{% endblock %}
 
@@ -7,7 +8,7 @@
   <div>
     <p class="eyebrow">Crypto checkout</p>
     <h1>{{ intent.merchant.name }}</h1>
-    <p class="amount">{{ intent.currency }} {{ intent.amount }}</p>
+    <p class="amount">{{ intent.amount|money:intent.currency }}</p>
     {% if attempt %}<p class="description">Provider: {{ attempt.provider }}</p>{% endif %}
     {% if intent.description %}<p class="description">{{ intent.description }}</p>{% endif %}
   </div>
