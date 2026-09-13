@@ -28,5 +28,4 @@ Fox Pay does not automatically retry money movement in a way that could double-c
 
 ## Refunds
 
-Refunds are modeled independently and can be partial. Refund ledger entries reverse the payment clearing flow. Crypto refunds are not treated as card refunds; they need a separate destination-address workflow before production use.
-
+Refunds are modeled independently and can be partial. Refund ledger entries reverse the payment clearing flow. The API currently performs this workflow for test-mode mock payments only; live provider refunds must be issued directly in the provider dashboard. Crypto refunds are not treated as card refunds; they need a separate destination-address workflow before production use.

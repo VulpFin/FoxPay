@@ -10,6 +10,7 @@ from django.test import TestCase, override_settings
 from django.urls import reverse
 
 from .ledger import transaction_balances
+from .services import record_webhook
 from .models import (
     APIKey,
     Customer,
@@ -377,6 +378,88 @@ class PaymentIntentAPITests(TestCase):
         self.assertEqual(Refund.objects.count(), 1)
         tx = LedgerTransaction.objects.get(refund__public_id=first.json()["id"])
         self.assertEqual(transaction_balances(tx), (400, 400))
+
+    def test_live_stripe_refund_does_not_claim_success_without_provider_call(self):
+        config = ProviderConfig.objects.create(
+            merchant=self.merchant,
+            kind=ProviderConfig.KIND_CARD,
+            provider="stripe-primary",
+            adapter="stripe",
+        )
+        intent = PaymentIntent.objects.create(
+            merchant=self.merchant,
+            amount=1000,
+            currency="USD",
+            status=PaymentIntent.STATUS_SUCCEEDED,
+            environment="live",
+        )
+        intent.attempts.create(
+            provider_config=config,
+            method=PaymentAttempt.METHOD_CARD,
+            provider="stripe",
+            status=PaymentAttempt.STATUS_SUCCEEDED,
+            amount=1000,
+            currency="USD",
+        )
+
+        response = self.client.post(
+            reverse("payments:refunds", args=[intent.public_id]),
+            data=json.dumps({"amount": 400}),
+            content_type="application/json",
+            HTTP_X_FOXPAY_KEY=self.raw_key,
+        )
+
+        self.assertEqual(response.status_code, 501)
+        self.assertEqual(response.json()["error"]["code"], "provider_refund_unavailable")
+        self.assertFalse(Refund.objects.filter(payment_intent=intent).exists())
+        intent.refresh_from_db()
+        self.assertEqual(intent.status, PaymentIntent.STATUS_SUCCEEDED)
+
+    def test_expiring_one_card_option_keeps_another_available(self):
+        intent = PaymentIntent.objects.create(merchant=self.merchant, amount=1000, currency="USD")
+        primary = intent.attempts.create(
+            method=PaymentAttempt.METHOD_CARD,
+            provider="stripe",
+            status=PaymentAttempt.STATUS_ACTION_REQUIRED,
+        )
+        backup = intent.attempts.create(
+            method=PaymentAttempt.METHOD_CARD,
+            provider="backup",
+            status=PaymentAttempt.STATUS_ACTION_REQUIRED,
+        )
+
+        record_webhook("stripe-primary", {
+            "id": "evt_primary_expired",
+            "type": "checkout.session.expired",
+            "payment_intent": intent.public_id,
+            "foxpay_attempt_id": str(primary.id),
+            "foxpay_method": PaymentAttempt.METHOD_CARD,
+            "status": "expired",
+        })
+        intent.refresh_from_db()
+        backup.refresh_from_db()
+        self.assertEqual(intent.status, PaymentIntent.STATUS_REQUIRES_PAYMENT)
+        self.assertEqual(backup.status, PaymentAttempt.STATUS_ACTION_REQUIRED)
+
+        record_webhook("backup", {
+            "id": "evt_backup_paid",
+            "type": "checkout.session.completed",
+            "payment_intent": intent.public_id,
+            "foxpay_attempt_id": str(backup.id),
+            "foxpay_method": PaymentAttempt.METHOD_CARD,
+            "status": "paid",
+        })
+        record_webhook("stripe-primary", {
+            "id": "evt_primary_expired_late",
+            "type": "checkout.session.expired",
+            "payment_intent": intent.public_id,
+            "foxpay_attempt_id": str(primary.id),
+            "foxpay_method": PaymentAttempt.METHOD_CARD,
+            "status": "expired",
+        })
+        intent.refresh_from_db()
+        self.assertEqual(intent.status, PaymentIntent.STATUS_SUCCEEDED)
+        self.assertEqual(ProviderEvent.objects.get(provider_event_id="evt_primary_expired_late").normalized_event_type, "payment_attempt.expired")
 
     @override_settings(FOXPAY_WEBHOOK_SECRET="test-secret")
     def test_duplicate_provider_webhooks_are_idempotent(self):

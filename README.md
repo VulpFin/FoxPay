@@ -62,6 +62,10 @@ The response includes `foxpay_checkout_url`. Redirect the customer there to show
 
 ## Refund a payment intent
 
+The API example below applies to test-mode mock payments. Live Stripe refunds
+must currently be issued in Stripe; Fox Pay returns `501` rather than reporting
+a refund that the processor has not made.
+
 ```powershell
 $body = @{ amount = 500; reason = "requested_by_customer" } | ConvertTo-Json
 Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:8000/api/v1/payment-intents/fp_pi_example/refunds/" -Headers $headers -Body $body

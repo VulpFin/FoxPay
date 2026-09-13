@@ -58,7 +58,11 @@ Requires `payments:read`.
 
 Requires `refunds:write`.
 
+This endpoint currently supports test-mode mock payments only. For Stripe or
+other live providers it returns `501 provider_refund_unavailable` and does not
+create a refund or ledger entry. Issue live refunds in the provider dashboard
+until a provider-backed refund flow is implemented.
+
 ## OpenAPI
 
 `GET /api/v1/openapi.json`
-
