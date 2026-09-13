@@ -39,6 +39,29 @@ credential `ipn_secret`. Until it is configured, this endpoint returns 503 and
 does not accept notifications. The `finished` status settles a matching Fox Pay
 invoice; `partially_paid` and intermediate states do not.
 
+Square webhook subscriptions use this production notification URL:
+
+```text
+https://foxpay.fyi/api/v1/webhooks/square/vulpfin/square-primary/
+```
+
+Run `configure_square_webhook_provider --merchant vulpfin --environment live`
+to create the inactive, webhook-only provider before saving the subscription.
+Select `payment.created` and `payment.updated`; add `refund.created` and
+`refund.updated` when tracking Square refunds. Square displays the subscription
+Signature Key after it is saved. Put it in `SQUARE_WEBHOOK_SIGNATURE_KEY` in the
+server environment and rerun the command. The key is then stored as an encrypted
+`webhook_signature_key` provider credential. Never put it in Git or command-line
+arguments. The URL must match the saved subscription URL byte-for-byte, including
+its trailing slash, because Square signs the URL together with the raw body.
+
+The Square receiver returns 503 for POST until the signature key is configured.
+Afterward it verifies `x-square-hmacsha256-signature`, deduplicates `event_id`,
+and records a minimal event summary without card details. It does not yet
+create Square checkouts, correlate Square payment IDs to Fox Pay attempts, or
+settle Fox Pay payment intents. A separate Square payment adapter is required
+before Square can be offered as a checkout route.
+
 ## Outgoing Merchant Webhooks
 
 Merchant webhook events are stored in `MerchantWebhookEvent`.

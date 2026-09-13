@@ -13,6 +13,7 @@ from django.views.decorators.http import require_GET, require_http_methods, requ
 
 from .adapters.stripe_checkout import construct_stripe_event, normalize_stripe_event
 from .adapters.nowpayments import ipn_attempt, normalize_ipn, provider_secret, validate_ipn_amount, verify_ipn
+from .adapters.square_webhooks import record_square_event, verify_square_signature
 from .events import emit_event
 from .ledger import record_payment_success
 from .models import PaymentAttempt, PaymentIntent, ProviderConfig
@@ -228,6 +229,47 @@ def nowpayments_ipn(request, merchant_slug, provider):
     return JsonResponse({"received": True, "processed": delivery.processed})
 
 
+@csrf_exempt
+@require_http_methods(["GET", "POST"])
+def square_webhook(request, merchant_slug, provider):
+    config = ProviderConfig.objects.filter(
+        merchant__slug=merchant_slug,
+        environment=settings.FOXPAY_ENV,
+        kind=ProviderConfig.KIND_CARD,
+        adapter="square",
+        provider=provider,
+    ).first()
+    if not config:
+        return error_response("Square webhook provider not found.", 404, request_id=getattr(request, "request_id", ""), code="provider_not_found")
+    notification_url = config.settings.get("webhook_notification_url", "")
+    signature_key = provider_secret(config, "webhook_signature_key")
+    if request.method == "GET":
+        return JsonResponse({"receiver": "square", "ready": bool(notification_url and signature_key)})
+    if not notification_url or not signature_key:
+        return error_response("Square webhook signature key is not configured.", 503, request_id=getattr(request, "request_id", ""), code="provider_not_configured")
+    if not verify_square_signature(
+        request.body,
+        request.headers.get("X-Square-HmacSha256-Signature", ""),
+        signature_key,
+        notification_url,
+    ):
+        return error_response("Invalid Square webhook signature.", 401, request_id=getattr(request, "request_id", ""), type="authentication_error", code="invalid_signature")
+    try:
+        event = json.loads(request.body)
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return error_response("Invalid Square webhook JSON.", 400, request_id=getattr(request, "request_id", ""), code="invalid_event")
+    if (
+        not isinstance(event, dict)
+        or not isinstance(event.get("event_id"), str)
+        or not 0 < len(event["event_id"]) <= 160
+        or not isinstance(event.get("type"), str)
+        or not 0 < len(event["type"]) <= 120
+    ):
+        return error_response("Square webhook event_id and type are required.", 400, request_id=getattr(request, "request_id", ""), code="invalid_event")
+    recorded = record_square_event(config, event)
+    return JsonResponse({"received": True, "recorded": recorded})
+
+
 @staff_member_required
 def dashboard(request):
     intents = PaymentIntent.objects.select_related("merchant").prefetch_related("attempts").order_by("-created_at")[:50]
@@ -266,6 +308,9 @@ def openapi(request):
                 },
                 "/api/v1/webhooks/nowpayments/{merchant_slug}/{provider}/": {
                     "post": {"summary": "Receive signed NOWPayments IPN events"}
+                },
+                "/api/v1/webhooks/square/{merchant_slug}/{provider}/": {
+                    "post": {"summary": "Record signed Square webhook events"}
                 },
             },
         }

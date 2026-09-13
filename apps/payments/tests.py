@@ -1,15 +1,18 @@
 import json
 import hashlib
 import hmac
+import base64
 from io import StringIO
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.core.management import call_command
+from django.core.management.base import CommandError
 from django.test import TestCase, override_settings
 from django.urls import reverse
 
 from .adapters.nowpayments import canonical_ipn
+from .adapters.square_webhooks import verify_square_signature
 from .ledger import transaction_balances
 from .services import record_webhook
 from .models import (
@@ -25,6 +28,7 @@ from .models import (
     ProviderCredential,
     ProviderEvent,
     Refund,
+    WebhookDelivery,
 )
 
 
@@ -714,3 +718,142 @@ class BootstrapMerchantTests(TestCase):
         self.assertNotIn(secret, endpoint.encrypted_secret)
         self.assertTrue(endpoint.matches_secret(secret))
         self.assertEqual(endpoint.reveal_secret(), secret)
+
+
+@override_settings(FOXPAY_ENV="live")
+class SquareWebhookTests(TestCase):
+    def setUp(self):
+        user = get_user_model().objects.create_user(username="square-owner@example.com")
+        self.merchant = Merchant.objects.create(owner=user, name="VulpFin", slug="vulpfin")
+        self.url = reverse("payments:square_webhook", args=["vulpfin", "square-primary"])
+        self.notification_url = f"https://foxpay.fyi{self.url}"
+
+    def configure(self, provider="square-primary", key="sq-test-signature-key"):
+        with patch.dict("os.environ", {"SQUARE_WEBHOOK_SIGNATURE_KEY": key}):
+            call_command(
+                "configure_square_webhook_provider",
+                merchant="vulpfin",
+                provider=provider,
+                environment="live",
+                stdout=StringIO(),
+            )
+        return ProviderConfig.objects.get(provider=provider)
+
+    def signature(self, body, key="sq-test-signature-key", url=None):
+        digest = hmac.new(
+            key.encode("utf-8"),
+            (url or self.notification_url).encode("utf-8") + body,
+            hashlib.sha256,
+        ).digest()
+        return base64.b64encode(digest).decode("ascii")
+
+    def send_event(self, event, key="sq-test-signature-key", url=None, path=None):
+        body = json.dumps(event, separators=(",", ":")).encode("utf-8")
+        return self.client.post(
+            path or self.url,
+            data=body,
+            content_type="application/json",
+            HTTP_X_SQUARE_HMACSHA256_SIGNATURE=self.signature(body, key=key, url=url),
+        )
+
+    def test_square_signature_matches_published_example(self):
+        self.assertTrue(verify_square_signature(
+            b'{"hello":"world"}',
+            "2kRE5qRU2tR+tBGlDwMEw2avJ7QM4ikPYD/PJ3bd9Og=",
+            "asdf1234",
+            "https://example.com/webhook",
+        ))
+        self.assertFalse(verify_square_signature(
+            b'{"hello":"world"}', "not-ascii-\u00e9", "asdf1234", "https://example.com/webhook"
+        ))
+
+    def test_receiver_exists_before_signature_key_but_rejects_posts(self):
+        self.assertEqual(self.client.post(self.url, data="{}", content_type="application/json").status_code, 404)
+        self.configure(key="")
+        config = ProviderConfig.objects.get(provider="square-primary")
+        self.assertFalse(config.is_active)
+        self.assertEqual(config.settings["webhook_notification_url"], self.notification_url)
+        self.assertEqual(self.client.get(self.url).json(), {"receiver": "square", "ready": False})
+        response = self.client.post(self.url, data="{}", content_type="application/json")
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.json()["error"]["code"], "provider_not_configured")
+        self.assertEqual(ProviderEvent.objects.count(), 0)
+
+    def test_signed_event_is_deduplicated_and_does_not_settle_intent(self):
+        config = self.configure()
+        credential = config.credentials.get(name="webhook_signature_key")
+        self.assertNotIn("sq-test-signature-key", credential.encrypted_value)
+        self.assertTrue(self.client.get(self.url).json()["ready"])
+        intent = PaymentIntent.objects.create(merchant=self.merchant, amount=2500, currency="USD")
+        event = {
+            "event_id": "evt_square_1001",
+            "type": "payment.updated",
+            "merchant_id": "square-merchant-1",
+            "data": {
+                "type": "payment",
+                "id": "square-payment-1",
+                "object": {"payment": {
+                    "status": "COMPLETED",
+                    "order_id": "square-order-1",
+                    "reference_id": intent.public_id,
+                    "card_details": {"card": {"last_4": "1234", "fingerprint": "private-card-data"}},
+                }},
+            },
+        }
+        first = self.send_event(event)
+        second = self.send_event(event)
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(first.json(), {"received": True, "recorded": True})
+        self.assertEqual(second.json(), {"received": True, "recorded": False})
+        self.assertEqual(ProviderEvent.objects.count(), 1)
+        self.assertEqual(WebhookDelivery.objects.count(), 1)
+        recorded = ProviderEvent.objects.get()
+        self.assertIsNone(recorded.merchant)
+        self.assertEqual(recorded.payload["status"], "COMPLETED")
+        self.assertEqual(recorded.payload["resource_id"], "square-payment-1")
+        self.assertNotIn("private-card-data", json.dumps(recorded.payload))
+        self.assertNotIn("1234", json.dumps(WebhookDelivery.objects.get().payload))
+        intent.refresh_from_db()
+        self.assertNotEqual(intent.status, PaymentIntent.STATUS_SUCCEEDED)
+
+    def test_wrong_signature_url_and_malformed_signed_json_are_rejected(self):
+        self.configure()
+        event = {"event_id": "evt_square_1002", "type": "payment.created"}
+        self.assertEqual(self.send_event(event, key="wrong-key").status_code, 401)
+        self.assertEqual(self.send_event(event, url=self.notification_url.rstrip("/")).status_code, 401)
+        bad_body = b"not-json"
+        response = self.client.post(
+            self.url,
+            data=bad_body,
+            content_type="application/json",
+            HTTP_X_SQUARE_HMACSHA256_SIGNATURE=self.signature(bad_body),
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(self.send_event({"type": "payment.created"}).status_code, 400)
+        self.assertEqual(ProviderEvent.objects.count(), 0)
+
+    def test_two_square_provider_routes_have_independent_keys(self):
+        self.configure()
+        self.configure(provider="square-backup", key="backup-signature-key")
+        backup_path = reverse("payments:square_webhook", args=["vulpfin", "square-backup"])
+        event = {"event_id": "evt_shared_id", "type": "payment.created"}
+        self.assertEqual(self.send_event(event).status_code, 200)
+        self.assertEqual(self.send_event(event, path=backup_path).status_code, 401)
+        self.assertEqual(self.send_event(
+            event,
+            key="backup-signature-key",
+            url=f"https://foxpay.fyi{backup_path}",
+            path=backup_path,
+        ).status_code, 200)
+        self.assertEqual(ProviderEvent.objects.count(), 2)
+
+    def test_command_rejects_nonmatching_notification_url(self):
+        with self.assertRaises(CommandError):
+            call_command(
+                "configure_square_webhook_provider",
+                merchant="vulpfin",
+                environment="live",
+                notification_url="https://foxpay.fyi/api/v1/webhooks/stripe/stripe-primary/",
+                stdout=StringIO(),
+            )
+        self.assertEqual(ProviderConfig.objects.count(), 0)

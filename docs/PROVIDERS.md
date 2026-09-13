@@ -67,6 +67,15 @@ Supported incoming Stripe events:
 Fox Pay verifies the `Stripe-Signature` header against the encrypted
 `webhook_secret` credential before normalizing the event.
 
+## Square Webhook Receiver
+
+Square has a signed, webhook-only receiver at
+`https://foxpay.fyi/api/v1/webhooks/square/vulpfin/square-primary/`. Use
+`configure_square_webhook_provider` to create its inactive provider config and
+store the Square subscription Signature Key after the subscription is saved.
+See [WEBHOOKS.md](WEBHOOKS.md) for setup and current limitations. This does not
+activate Square checkout or refunds.
+
 ## NOWPayments Hosted Crypto
 
 Fox Pay creates a NOWPayments hosted invoice with a unique `order_id` for each
