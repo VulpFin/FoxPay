@@ -641,5 +641,6 @@ th {
 .seller-row-actions button { min-height: 34px; padding: 0 10px; white-space: nowrap; }
 .seller-row-actions select { min-height: 34px; max-width: 150px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--ink); }
 .seller-subheading { margin-top: 36px; }
+.seller-provider-actions { margin: 20px 0; }
 .one-time-secret { display: grid; gap: 8px; }
 .one-time-secret code { display: block; overflow-wrap: anywhere; user-select: all; }

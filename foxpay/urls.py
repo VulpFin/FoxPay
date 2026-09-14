@@ -4,6 +4,7 @@ from django.urls import include, path
 from .views import healthz
 from apps.accounts import views as account_views
 from apps.payments import merchant_views
+from apps.payments import stripe_connect_views
 
 
 urlpatterns = [
@@ -22,6 +23,10 @@ urlpatterns = [
     path("seller/apply/", merchant_views.apply, name="seller_apply"),
     path("seller/agreement/", merchant_views.agreement, name="seller_agreement"),
     path("seller/review/", merchant_views.review, name="seller_review"),
+    path("seller/<slug:slug>/stripe/<str:environment>/connect/", stripe_connect_views.begin_stripe_connect, name="seller_stripe_connect"),
+    path("seller/<slug:slug>/stripe/<str:environment>/callback/", stripe_connect_views.stripe_connect_callback, name="seller_stripe_callback"),
+    path("seller/<slug:slug>/stripe/<uuid:connection_uuid>/disconnect/", stripe_connect_views.disconnect_stripe_connect, name="seller_stripe_disconnect"),
+    path("api/v1/webhooks/stripe/connect/<str:endpoint_environment>/", stripe_connect_views.stripe_connect_webhook, name="stripe_connect_webhook"),
     path("seller/<slug:slug>/keys/create/", merchant_views.create_key, name="seller_create_key"),
     path("seller/<slug:slug>/keys/<uuid:key_uuid>/revoke/", merchant_views.revoke_key, name="seller_revoke_key"),
     path("seller/<slug:slug>/keys/<uuid:key_uuid>/rotate/", merchant_views.rotate_key, name="seller_rotate_key"),

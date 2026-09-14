@@ -179,6 +179,11 @@ class MerchantProviderConnection(TimeStampedModel):
                 condition=~models.Q(external_account_id=""),
                 name="unique_merchant_provider_account",
             ),
+            models.UniqueConstraint(
+                fields=["provider", "environment", "external_account_id"],
+                condition=~models.Q(external_account_id=""),
+                name="unique_provider_account_owner",
+            ),
         ]
 
     def set_access_token(self, value):

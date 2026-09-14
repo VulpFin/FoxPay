@@ -81,13 +81,18 @@ def _render_detail(request, slug, section="overview", one_time_secret=""):
         "can_members": can_manage(membership, "members"),
         "can_settings": can_manage(membership, "settings"),
         "can_refunds": can_manage(membership, "refunds"),
+        "can_connections": can_manage(membership, "connections"),
     }
     if section == "overview":
         context["payment_count"] = merchant.payment_intents.count()
         context["dispute_count"] = merchant.disputes.count()
         context["connection_count"] = merchant.provider_connections.filter(status="active").count()
     elif section == "providers":
+        from .stripe_connect import connect_available
+
         context["connections"] = merchant.provider_connections.order_by("provider", "environment", "created_at")
+        context["stripe_connect_test_available"] = connect_available("test")
+        context["stripe_connect_live_available"] = connect_available("live")
     elif section == "payments":
         context["payments"] = merchant.payment_intents.order_by("-created_at")[:100]
     elif section == "disputes":

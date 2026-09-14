@@ -58,6 +58,10 @@ class StripeCheckoutAdapter(PaymentProviderAdapter):
         return getattr(settings, fallback_setting, "") if fallback_setting else ""
 
     def secret_key(self):
+        if self.provider_config and self.provider_config.connection_id and self.provider_config.connection.authorization_method == "stripe_connect":
+            from apps.payments.stripe_connect import platform_secret_key
+
+            return platform_secret_key(self.provider_config.environment)
         value = self.credential("secret_key", "STRIPE_SECRET_KEY")
         if not value:
             raise ImproperlyConfigured("Stripe Checkout requires a secret_key provider credential or STRIPE_SECRET_KEY.")
@@ -123,18 +127,25 @@ class StripeCheckoutAdapter(PaymentProviderAdapter):
             params["customer_email"] = intent.customer.email
 
         try:
+            stripe_account = None
+            if self.provider_config and self.provider_config.connection_id and self.provider_config.connection.authorization_method == "stripe_connect":
+                connection = self.provider_config.connection
+                if connection.status != connection.STATUS_ACTIVE or connection.revoked_at or not connection.external_account_id:
+                    raise ProviderAdapterError("Stripe connection is not active.")
+                stripe_account = connection.external_account_id
             session = stripe.checkout.Session.create(
                 **params,
                 api_key=self.secret_key(),
                 idempotency_key=f"foxpay:{intent.public_id}:{attempt.id}",
+                **({"stripe_account": stripe_account} if stripe_account else {}),
             )
         except Exception as exc:
             attempt.status = PaymentAttempt.STATUS_FAILED
             attempt.provider_status = "create_failed"
             attempt.failure_category = exc.__class__.__name__
-            attempt.failure_code = getattr(exc, "code", "") or getattr(exc, "user_message", "")[:80]
+            attempt.failure_code = str(getattr(exc, "code", ""))[:80]
             attempt.save(update_fields=["status", "provider_status", "failure_category", "failure_code", "updated_at"])
-            raise ProviderAdapterError(f"Stripe Checkout session creation failed: {exc}") from exc
+            raise ProviderAdapterError("Stripe Checkout session creation failed.") from exc
 
         session_dict = object_to_dict(session)
         attempt.status = PaymentAttempt.STATUS_ACTION_REQUIRED

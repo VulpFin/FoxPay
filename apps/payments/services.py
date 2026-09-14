@@ -14,7 +14,7 @@ from .events import emit_event
 from .ledger import record_payment_success, record_refund
 from .models import APIKey, Customer, IdempotencyRecord, Merchant, PaymentAttempt, PaymentIntent, ProviderEvent, Refund, WebhookDelivery
 from .permissions import routing_block_reason
-from .routing import provider_routes
+from .routing import authorized_config, provider_routes
 from .safe_urls import UnsafeURL, return_origin
 
 
@@ -222,6 +222,10 @@ def create_attempts_for_method(request, merchant, intent, payload, method):
     failures = []
     for provider, provider_config in provider_routes(merchant, method):
         enforce_merchant_routing(merchant, fresh=True)
+        if provider_config:
+            provider_config = type(provider_config).objects.select_for_update().select_related("connection").get(pk=provider_config.pk)
+            if not provider_config.is_active or not authorized_config(merchant, provider_config):
+                continue
         try:
             if method == PaymentAttempt.METHOD_CARD:
                 created.append(get_card_adapter(provider, provider_config).create_attempt(request, intent, payload))

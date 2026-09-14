@@ -257,6 +257,8 @@ def stripe_webhook(request, provider="stripe"):
         return error_response(str(exc), 500, request_id=getattr(request, "request_id", ""), code="provider_not_configured")
     except Exception:
         return error_response("Invalid Stripe webhook signature.", 401, request_id=getattr(request, "request_id", ""), type="authentication_error", code="invalid_signature")
+    if event.get("account"):
+        return error_response("Connect events require the Connect webhook endpoint.", 400, request_id=getattr(request, "request_id", ""), code="wrong_webhook_endpoint")
     try:
         if event.get("type") == "checkout.session.completed" and event.get("data", {}).get("object", {}).get("mode") == "setup":
             if not config:
