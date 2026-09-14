@@ -39,11 +39,13 @@ class TimeStampedModel(models.Model):
 
 
 class Merchant(TimeStampedModel):
+    STATUS_PENDING = "pending"
     STATUS_ACTIVE = "active"
     STATUS_RESTRICTED = "restricted"
     STATUS_DISABLED = "disabled"
 
     STATUS_CHOICES = [
+        (STATUS_PENDING, "Pending review"),
         (STATUS_ACTIVE, "Active"),
         (STATUS_RESTRICTED, "Restricted"),
         (STATUS_DISABLED, "Disabled"),
@@ -56,8 +58,19 @@ class Merchant(TimeStampedModel):
     legal_name = models.CharField(max_length=240, blank=True)
     website_url = models.URLField(blank=True)
     support_email = models.EmailField(blank=True)
+    country = models.CharField(max_length=2, blank=True)
+    business_category = models.CharField(max_length=120, blank=True)
+    business_description = models.TextField(blank=True)
     default_currency = models.CharField(max_length=3, default="USD")
-    status = models.CharField(max_length=24, choices=STATUS_CHOICES, default=STATUS_ACTIVE)
+    status = models.CharField(max_length=24, choices=STATUS_CHOICES, default=STATUS_PENDING)
+    live_payments_enabled = models.BooleanField(default=False)
+    approved_at = models.DateTimeField(blank=True, null=True)
+    approved_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, related_name="approved_merchants", blank=True, null=True)
+    reviewed_at = models.DateTimeField(blank=True, null=True)
+    reviewed_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, related_name="reviewed_merchants", blank=True, null=True)
+    suspended_at = models.DateTimeField(blank=True, null=True)
+    suspension_reason = models.CharField(max_length=500, blank=True)
+    risk_level = models.CharField(max_length=24, default="unreviewed")
     card_provider = models.CharField(max_length=40, default="mock")
     crypto_provider = models.CharField(max_length=40, default="manual")
     crypto_addresses = models.JSONField(default=dict, blank=True, help_text="Example: {\"BTC\": \"bc1...\", \"ETH\": \"0x...\"}")
@@ -101,6 +114,27 @@ class MerchantMembership(TimeStampedModel):
     def __str__(self):
         identity = self.tg11_user_uuid or self.user_id
         return f"{self.merchant} {identity} {self.role}"
+
+
+class MerchantAgreementAcceptance(models.Model):
+    merchant = models.ForeignKey(Merchant, on_delete=models.PROTECT, related_name="agreement_acceptances")
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="merchant_agreement_acceptances")
+    agreement_version = models.CharField(max_length=40)
+    agreement_hash = models.CharField(max_length=64)
+    acceptable_use_version = models.CharField(max_length=40)
+    acceptable_use_hash = models.CharField(max_length=64)
+    accepted_at = models.DateTimeField(default=timezone.now, editable=False)
+    request_ip = models.GenericIPAddressField(blank=True, null=True)
+    user_agent = models.CharField(max_length=500, blank=True)
+    supersedes = models.ForeignKey("self", on_delete=models.PROTECT, blank=True, null=True, related_name="superseded_by")
+
+    def save(self, *args, **kwargs):
+        if self.pk:
+            raise ValueError("Agreement acceptances are append-only.")
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValueError("Agreement acceptances are append-only.")
 
 
 class ProviderConfig(TimeStampedModel):

@@ -610,3 +610,23 @@ th {
 .footlinks { display: flex; flex-wrap: wrap; gap: 0.75rem; justify-content: center; }
 .footlinks a { color: var(--muted); text-decoration: none; }
 .footlinks a:hover { color: var(--ink); text-decoration: underline; }
+
+.seller-form-wrap { max-width: 720px; }
+.seller-form { display: grid; gap: 16px; margin-top: 24px; }
+.seller-field { display: grid; gap: 6px; }
+.seller-field label, .review-form label { font-size: 13px; font-weight: 700; }
+.seller-field input:not([type="checkbox"]), .seller-field textarea, .review-form input, .review-form select {
+  width: 100%; min-height: 42px; padding: 9px 11px; border: 1px solid var(--line); border-radius: 6px;
+  background: var(--surface); color: var(--ink); font: inherit;
+}
+.seller-field textarea { resize: vertical; }
+.seller-check { display: flex; align-items: center; gap: 10px; }
+.seller-check label { order: 2; }
+.seller-check input { order: 1; width: 18px; height: 18px; accent-color: var(--accent); }
+.form-error { color: #bb2d3b; }
+.agreement-text { max-width: 52rem; overflow-wrap: anywhere; }
+.agreement-text h1 { font-size: 22px; }
+.agreement-text h2 { margin-top: 24px; font-size: 18px; }
+.review-form { display: grid; min-width: 180px; gap: 6px; }
+.seller-review-table { min-width: 840px; }
+.seller-review-table td:first-child { min-width: 280px; }

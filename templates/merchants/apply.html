@@ -1,0 +1,21 @@
+{% extends "payments/base.html" %}
+{% block title %}Apply to sell | Fox Pay{% endblock %}
+{% block content %}
+<section class="account-section seller-form-wrap">
+  <p class="eyebrow">Seller accounts</p>
+  <h1>Apply to sell</h1>
+  <p class="muted">A submitted account remains pending until staff review. Live payments are off during review.</p>
+  <form method="post" class="seller-form">
+    {% csrf_token %}
+    {% for field in form %}
+      <div class="seller-field{% if field.field.widget.input_type == 'checkbox' %} seller-check{% endif %}">
+        {{ field.label_tag }}
+        {{ field }}
+        {% for error in field.errors %}<small class="form-error">{{ error }}</small>{% endfor %}
+      </div>
+    {% endfor %}
+    <p class="muted">Read the <a href="{% url 'seller_agreement' %}">merchant agreement draft</a> and <a href="/guidelines/">acceptable-use policy</a> before submitting.</p>
+    <button type="submit">Submit application</button>
+  </form>
+</section>
+{% endblock %}

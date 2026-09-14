@@ -12,7 +12,8 @@ from .adapters.card import get_card_adapter
 from .adapters.crypto import get_crypto_adapter
 from .events import emit_event
 from .ledger import record_payment_success, record_refund
-from .models import APIKey, Customer, IdempotencyRecord, PaymentAttempt, PaymentIntent, ProviderEvent, Refund, WebhookDelivery
+from .models import APIKey, Customer, IdempotencyRecord, Merchant, PaymentAttempt, PaymentIntent, ProviderEvent, Refund, WebhookDelivery
+from .permissions import routing_block_reason
 from .routing import provider_routes
 
 
@@ -46,14 +47,24 @@ def authenticate_merchant(raw_key, required_scope=None):
         raise APIError("Missing X-FoxPay-Key header.", status=401, type="authentication_error", code="missing_api_key")
 
     prefix = raw_key[: APIKey.PREFIX_LENGTH]
-    candidates = APIKey.objects.select_related("merchant").filter(prefix=prefix, merchant__is_active=True)
+    candidates = APIKey.objects.select_related("merchant").filter(prefix=prefix)
     for api_key in candidates:
-        if api_key.usable and api_key.matches(raw_key):
+        if api_key.usable and api_key.environment == settings.FOXPAY_ENV and api_key.matches(raw_key):
+            enforce_merchant_routing(api_key.merchant)
             if required_scope and not api_key.has_scope(required_scope):
                 raise APIError("API key does not have the required scope.", status=403, type="permission_error", code="missing_scope")
             api_key.mark_used()
             return api_key.merchant
     raise APIError("Invalid Fox Pay API key.", status=401, type="authentication_error", code="invalid_api_key")
+
+
+def enforce_merchant_routing(merchant, *, fresh=False):
+    if fresh:
+        merchant = Merchant.objects.select_for_update().get(pk=merchant.pk)
+    reason = routing_block_reason(merchant)
+    if reason:
+        raise APIError("Merchant payment routing is unavailable.", status=403, type="permission_error", code=reason)
+    return merchant
 
 
 def serialize_attempt(attempt):
@@ -196,6 +207,7 @@ def create_attempts_for_method(request, merchant, intent, payload, method):
     created = []
     failures = []
     for provider, provider_config in provider_routes(merchant, method):
+        enforce_merchant_routing(merchant, fresh=True)
         try:
             if method == PaymentAttempt.METHOD_CARD:
                 created.append(get_card_adapter(provider, provider_config).create_attempt(request, intent, payload))
@@ -210,6 +222,7 @@ def create_attempts_for_method(request, merchant, intent, payload, method):
 
 @transaction.atomic
 def create_payment_intent(request, merchant, payload, idempotency_key=""):
+    merchant = enforce_merchant_routing(merchant, fresh=True)
     if idempotency_key:
         if len(idempotency_key) > 160:
             raise APIError("Idempotency-Key must be 160 characters or fewer.")

@@ -3,6 +3,7 @@ from django.urls import include, path
 
 from .views import healthz
 from apps.accounts import views as account_views
+from apps.payments import merchant_views
 
 
 urlpatterns = [
@@ -17,6 +18,11 @@ urlpatterns = [
     path("payment-methods/add/<slug:merchant_slug>/<str:provider>/", account_views.add_payment_method, name="account_add_payment_method"),
     path("payment-methods/remove/<uuid:method_uuid>/", account_views.remove_payment_method, name="account_remove_payment_method"),
     path("connections/", account_views.connections, name="account_connections"),
+    path("seller/", merchant_views.index, name="seller_index"),
+    path("seller/apply/", merchant_views.apply, name="seller_apply"),
+    path("seller/agreement/", merchant_views.agreement, name="seller_agreement"),
+    path("seller/review/", merchant_views.review, name="seller_review"),
+    path("seller/<slug:slug>/", merchant_views.detail, name="seller_detail"),
     path("", include("apps.pages.urls")),
     path("", include("apps.payments.urls")),
 ]

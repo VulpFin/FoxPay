@@ -97,6 +97,8 @@ class PaymentIntentAPITests(TestCase):
             owner=self.user,
             name="VulpFin",
             slug="vulpfin",
+            status=Merchant.STATUS_ACTIVE,
+            live_payments_enabled=True,
             crypto_addresses={"BTC": "bc1qtestaddress"},
         )
         _, self.raw_key = APIKey.issue(self.merchant, "Test key")
@@ -428,11 +430,12 @@ class PaymentIntentAPITests(TestCase):
 
     @override_settings(FOXPAY_ENV="live")
     def test_live_crypto_does_not_fall_back_to_unverified_manual_wallet(self):
+        _, live_key = APIKey.issue(self.merchant, environment="live")
         response = self.client.post(
             reverse("payments:payment_intents"),
             data=json.dumps({"amount": 2500, "currency": "USD", "payment_methods": ["crypto"]}),
             content_type="application/json",
-            HTTP_X_FOXPAY_KEY=self.raw_key,
+            HTTP_X_FOXPAY_KEY=live_key,
         )
         self.assertEqual(response.status_code, 400)
         self.assertIn("No available crypto providers", response.json()["error"]["message"])
@@ -440,6 +443,7 @@ class PaymentIntentAPITests(TestCase):
     @override_settings(FOXPAY_ENV="live")
     @patch("apps.payments.adapters.stripe_checkout.stripe_module", return_value=FakeStripe)
     def test_live_default_checkout_uses_available_card_route(self, _stripe_module):
+        _, live_key = APIKey.issue(self.merchant, environment="live")
         config = ProviderConfig.objects.create(
             merchant=self.merchant,
             environment="live",
@@ -455,7 +459,7 @@ class PaymentIntentAPITests(TestCase):
             reverse("payments:payment_intents"),
             data=json.dumps({"amount": 2500, "currency": "USD"}),
             content_type="application/json",
-            HTTP_X_FOXPAY_KEY=self.raw_key,
+            HTTP_X_FOXPAY_KEY=live_key,
         )
 
         self.assertEqual(response.status_code, 201)
@@ -934,7 +938,7 @@ class CustomerIdentityAndSubscriptionTests(TestCase):
     def setUp(self):
         User = get_user_model()
         self.owner = User.objects.create_user("owner", password="test-pass")
-        self.merchant = Merchant.objects.create(owner=self.owner, name="VulpFin", slug="vulpfin")
+        self.merchant = Merchant.objects.create(owner=self.owner, name="VulpFin", slug="vulpfin", status=Merchant.STATUS_ACTIVE)
         _, self.key = APIKey.issue(self.merchant, scopes=["subscriptions:write"])
         self.subject = "00000000-0000-4000-8000-000000000001"
 

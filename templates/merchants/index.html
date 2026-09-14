@@ -1,0 +1,15 @@
+{% extends "payments/base.html" %}
+{% block title %}Seller accounts | Fox Pay{% endblock %}
+{% block content %}
+<section class="account-section">
+  <div class="section-heading"><div><p class="eyebrow">Your business</p><h1>Seller accounts</h1></div>{% if signup_enabled %}<a class="button-link" href="{% url 'seller_apply' %}">Apply to sell</a>{% endif %}</div>
+  {% if merchants %}
+    <div class="table-scroll"><table class="account-table"><thead><tr><th>Business</th><th>Review</th><th>Live routing</th></tr></thead><tbody>
+      {% for merchant in merchants %}<tr><td><a href="{% url 'seller_detail' merchant.slug %}"><strong>{{ merchant.name }}</strong></a><small>{{ merchant.slug }}</small></td><td>{{ merchant.get_status_display }}</td><td>{% if merchant.live_payments_enabled and merchant.status == 'active' %}Enabled{% else %}Off{% endif %}</td></tr>{% endfor %}
+    </tbody></table></div>
+  {% else %}
+    <p class="empty-state">No seller accounts are linked to this TG11 account.</p>
+  {% endif %}
+  {% if user.is_staff %}<p><a href="{% url 'seller_review' %}">Review seller applications</a></p>{% endif %}
+</section>
+{% endblock %}

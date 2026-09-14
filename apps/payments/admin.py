@@ -11,6 +11,7 @@ from .models import (
     LedgerEntry,
     LedgerTransaction,
     Merchant,
+    MerchantAgreementAcceptance,
     MerchantMembership,
     MerchantWebhookAttempt,
     MerchantWebhookEndpoint,
@@ -37,10 +38,26 @@ class ProviderConfigInline(admin.TabularInline):
 
 @admin.register(Merchant)
 class MerchantAdmin(admin.ModelAdmin):
-    list_display = ("name", "slug", "owner", "default_currency", "is_active", "created_at")
-    list_filter = ("is_active", "card_provider", "crypto_provider")
+    list_display = ("name", "slug", "owner", "status", "live_payments_enabled", "default_currency", "created_at")
+    list_filter = ("status", "live_payments_enabled", "card_provider", "crypto_provider")
     search_fields = ("name", "slug", "support_email")
+    readonly_fields = ("status", "live_payments_enabled", "approved_at", "approved_by", "reviewed_at", "reviewed_by", "suspended_at", "suspension_reason", "risk_level")
     inlines = [ProviderConfigInline]
+
+
+@admin.register(MerchantAgreementAcceptance)
+class MerchantAgreementAcceptanceAdmin(admin.ModelAdmin):
+    list_display = ("merchant", "user", "agreement_version", "accepted_at")
+    readonly_fields = ("merchant", "user", "agreement_version", "agreement_hash", "acceptable_use_version", "acceptable_use_hash", "accepted_at", "request_ip", "user_agent", "supersedes")
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
 
 
 @admin.register(ProviderConfig)

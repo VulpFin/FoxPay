@@ -1,0 +1,21 @@
+{% extends "payments/base.html" %}
+{% block title %}{{ merchant.name }} | Fox Pay{% endblock %}
+{% block content %}
+<section class="account-section">
+  <p class="eyebrow">Seller account</p>
+  <div class="account-heading"><h1>{{ merchant.name }}</h1><span class="state-pill">{{ merchant.get_status_display }}</span></div>
+  <div class="metrics">
+    <div><span>Live routing</span><strong>{% if merchant.live_payments_enabled and merchant.status == 'active' %}On{% else %}Off{% endif %}</strong></div>
+    <div><span>Your role</span><strong>{{ membership.get_role_display }}</strong></div>
+    <div><span>Country</span><strong>{{ merchant.country|default:'--' }}</strong></div>
+  </div>
+  {% if merchant.status == 'pending' %}<p>Application submitted. Staff review is required before live payment routing can be enabled.</p>{% endif %}
+  {% if merchant.suspension_reason %}<p class="flash">Routing notice: {{ merchant.suspension_reason }}</p>{% endif %}
+  <div class="table-scroll"><table class="account-table"><tbody>
+    <tr><th>Legal name</th><td>{{ merchant.legal_name|default:'--' }}</td></tr>
+    <tr><th>Website</th><td>{% if merchant.website_url %}<a href="{{ merchant.website_url }}" rel="noopener noreferrer">{{ merchant.website_url }}</a>{% else %}--{% endif %}</td></tr>
+    <tr><th>Support</th><td>{{ merchant.support_email|default:'--' }}</td></tr>
+    <tr><th>Category</th><td>{{ merchant.business_category|default:'--' }}</td></tr>
+  </tbody></table></div>
+</section>
+{% endblock %}

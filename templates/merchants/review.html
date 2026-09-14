@@ -1,0 +1,19 @@
+{% extends "payments/base.html" %}
+{% block title %}Seller review | Fox Pay{% endblock %}
+{% block content %}
+<section class="account-section">
+  <p class="eyebrow">Staff operations</p>
+  <h1>Seller review</h1>
+  <p class="muted">Approval enables live routing eligibility. Provider connections must still be configured separately.</p>
+  <div class="table-scroll"><table class="account-table seller-review-table"><thead><tr><th>Business</th><th>State</th><th>Routing</th><th>Decision</th></tr></thead><tbody>
+  {% for merchant in merchants %}
+    <tr><td><strong>{{ merchant.name }}</strong><small>{{ merchant.legal_name }} · {{ merchant.country }} · {{ merchant.support_email }}</small><small>{{ merchant.business_description|truncatechars:120 }}</small></td><td>{{ merchant.get_status_display }}</td><td>{% if merchant.live_payments_enabled %}Enabled{% else %}Off{% endif %}</td><td>
+      <form method="post" class="review-form">{% csrf_token %}<input type="hidden" name="merchant_id" value="{{ merchant.pk }}">
+        <label for="action-{{ merchant.pk }}">Action</label><select id="action-{{ merchant.pk }}" name="action" required><option value="">Choose</option><option value="approve">Approve</option><option value="reject">Reject</option><option value="restrict">Restrict</option><option value="disable">Disable</option><option value="kill">Stop live routing</option><option value="reinstate">Reinstate without live routing</option><option value="enable_live">Enable live routing</option></select>
+        <label for="reason-{{ merchant.pk }}">Reason</label><input id="reason-{{ merchant.pk }}" name="reason" maxlength="500" autocomplete="off"><button type="submit">Apply</button>
+      </form>
+    </td></tr>
+  {% empty %}<tr><td colspan="4">No seller applications.</td></tr>{% endfor %}
+  </tbody></table></div>
+</section>
+{% endblock %}

@@ -20,6 +20,7 @@ from apps.payments.models import (
     SubscriptionReference,
 )
 from apps.payments.adapters.stripe_methods import create_setup_checkout, detach_saved_method
+from apps.payments.permissions import routing_block_reason
 
 from .identity import linked_subject
 
@@ -133,12 +134,16 @@ def add_payment_method(request, merchant_slug, provider):
         is_active=True,
         settings__allow_customer_method_setup=True,
     )
+    if routing_block_reason(config.merchant):
+        return HttpResponseForbidden("Merchant payment routing is unavailable.")
     customer, _ = Customer.objects.get_or_create(
         merchant=config.merchant,
         tg11_user_uuid=subject,
         defaults={"email": request.user.email},
     )
     try:
+        if routing_block_reason(ProviderConfig.objects.select_related("merchant").get(pk=config.pk).merchant):
+            return HttpResponseForbidden("Merchant payment routing is unavailable.")
         url = create_setup_checkout(request, config, customer)
     except Exception:
         messages.error(request, "Card setup is temporarily unavailable.")

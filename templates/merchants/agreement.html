@@ -1,0 +1,10 @@
+{% extends "payments/base.html" %}
+{% block title %}Merchant agreement | Fox Pay{% endblock %}
+{% block content %}
+<section class="account-section prose">
+  <p class="eyebrow">Seller terms</p>
+  <h1>Merchant agreement</h1>
+  <p class="muted">Version {{ agreement_version }}. Draft for attorney review; seller signup remains closed until approval.</p>
+  <div class="agreement-text">{{ agreement_text|linebreaks }}</div>
+</section>
+{% endblock %}

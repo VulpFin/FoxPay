@@ -103,7 +103,7 @@ class SavedMethodViewTests(TestCase):
         owner = User.objects.create_user("owner")
         self.subject = uuid.uuid4()
         TG11IdentityLink.objects.create(user=self.user, subject=str(self.subject), application="foxpay")
-        self.merchant = Merchant.objects.create(owner=owner, name="VulpFin", slug="vulpfin")
+        self.merchant = Merchant.objects.create(owner=owner, name="VulpFin", slug="vulpfin", status=Merchant.STATUS_ACTIVE)
         self.config = ProviderConfig.objects.create(
             merchant=self.merchant, kind="card", provider="stripe-primary", adapter="stripe",
             environment="test", is_active=True, settings={"allow_customer_method_setup": True},

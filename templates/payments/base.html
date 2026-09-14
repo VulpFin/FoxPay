@@ -16,6 +16,7 @@
       {% if user.is_authenticated %}
         <nav class="topnav" aria-label="Account">
           <a href="/">Account</a>
+          <a href="{% url 'seller_index' %}">Seller</a>
           {% if user.is_staff %}<a href="{% url 'payments:dashboard' %}">Operations</a>{% endif %}
           <a href="/connections/">Connections</a>
         </nav>
