@@ -1,0 +1,97 @@
+{% extends "payments/base.html" %}
+{% block title %}Terms of Service · Fox Pay{% endblock %}
+{% block content %}
+<article class="account-section prose">
+  <h1>Terms of Service</h1>
+  {% include "pages/_meta.html" %}
+
+  <p>
+    Fox Pay is operated by <b>TG11 LLC</b>, doing business as Fox Pay ("we", "us"). These terms
+    cover both people paying through a Fox Pay checkout and merchants using the API. Using either
+    means you accept them.
+  </p>
+
+  <h2>1. What Fox Pay is, in legal terms</h2>
+  <p>
+    Fox Pay is a technical service that routes a payment to a payment provider. It is
+    <b>not</b> a bank, a money transmitter, an acquirer, a custodian or the seller of anything you
+    buy. The merchant is the seller and the merchant of record; the provider (Stripe, PayPal,
+    Square or the crypto network) moves the money.
+  </p>
+
+  <h2>2. If you are paying for something</h2>
+  <ul>
+    <li>Your contract for the goods or services is with the <b>merchant</b>, not with us. Delivery,
+      quality, cancellations and refunds are theirs to answer for.</li>
+    <li><b>Refunds start with the merchant.</b> We can only return money the merchant instructs us
+      to return, through the provider that took it.</li>
+    <li>Card details are entered with the provider, not with us. We never see or store a card
+      number.</li>
+    <li>The amount shown at checkout is what is authorised. Your bank or wallet may apply its own
+      fees or currency conversion.</li>
+    <li>An <b>authorisation</b> is not a payment: it places a hold that is either captured or
+      released. A crypto invoice settles when the network confirms it, and an underpaid or expired
+      invoice may need the merchant's help to resolve.</li>
+    <li>Disputes and chargebacks go through your card issuer or wallet provider, and we cooperate
+      with whatever they require.</li>
+  </ul>
+
+  <h2>3. If you are a merchant</h2>
+  <ul>
+    <li>You are responsible for what you sell, for your own terms and refunds, for your tax
+      position, and for the accuracy of the amounts you send us.</li>
+    <li>Keep your API keys and webhook secrets secret. Anything done with your key is treated as
+      done by you; rotate a key the moment you suspect it leaked.</li>
+    <li>Do not send us cardholder data. The API takes amounts and references, and any request that
+      appears to carry card details will be rejected.</li>
+    <li>You must follow the <a href="/guidelines/">acceptable use guidelines</a> and the rules of
+      whichever provider you route through. Their prohibited-business rules apply to you as much as
+      ours do.</li>
+    <li>Settlement, fees and payout timing are set by your provider account, not by Fox Pay.</li>
+    <li>We may suspend routing for an account that puts the service, a provider relationship or
+      other users at risk.</li>
+  </ul>
+
+  <h2>4. Accounts</h2>
+  <p>
+    A Fox Pay account signs in through TG11 Accounts. Keep your credentials safe and turn on
+    two-factor authentication there; changing a saved payment method asks you to prove it is still
+    you.
+  </p>
+
+  <h2>5. Availability</h2>
+  <p>
+    Fox Pay is provided "as is" and "as available", and it is early software. Features can change
+    or be withdrawn, and a provider outage can stop payments through that route. Current state is
+    on the <a href="/status/">status page</a>, and notable changes are listed in the
+    <a href="/changelog/">changelog</a>.
+  </p>
+
+  <h2>6. Liability</h2>
+  <p>
+    To the fullest extent the law allows, TG11 LLC is not liable for indirect, incidental, special,
+    consequential or punitive damages, nor for a merchant's conduct or a provider's outage. Our
+    total liability for a claim is limited to the Fox Pay fees you paid us for the transaction the
+    claim concerns.
+  </p>
+  <p>
+    Nothing here limits a right you have as a consumer that cannot be waived, including your right
+    to dispute a charge with your bank.
+  </p>
+
+  <h2>7. Changes</h2>
+  <p>
+    We may update these terms; the version and date at the top change when we do, and continuing to
+    use Fox Pay afterwards means the new terms apply.
+  </p>
+
+  <h2>8. Governing law</h2>
+  <p>
+    These terms are governed by the law of the operator's primary jurisdiction in the United
+    States, except where non-waivable local consumer law says otherwise.
+  </p>
+
+  <h2>9. Contact</h2>
+  <p><a href="mailto:support@tg11.org">support@tg11.org</a></p>
+</article>
+{% endblock %}

@@ -17,5 +17,6 @@ urlpatterns = [
     path("payment-methods/add/<slug:merchant_slug>/<str:provider>/", account_views.add_payment_method, name="account_add_payment_method"),
     path("payment-methods/remove/<uuid:method_uuid>/", account_views.remove_payment_method, name="account_remove_payment_method"),
     path("connections/", account_views.connections, name="account_connections"),
+    path("", include("apps.pages.urls")),
     path("", include("apps.payments.urls")),
 ]

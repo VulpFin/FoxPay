@@ -1,0 +1,47 @@
+{% extends "payments/base.html" %}
+{% block title %}Status · Fox Pay{% endblock %}
+{% block content %}
+<article class="account-section prose">
+  <h1>Service status</h1>
+
+  <p class="statusline">
+    <span class="state-pill {% if overall == 'ok' %}ok{% else %}bad{% endif %}">{{ overall|upper }}</span>
+  </p>
+
+  {% if overall == 'ok' %}
+  <p>Fox Pay is serving requests and its database is answering.</p>
+  {% else %}
+  <p>
+    Fox Pay is serving pages but its database is not answering. New payments may fail and recent
+    ones may not show. We can see this too — if it lasts, <a href="/support/">tell us</a>.
+  </p>
+  {% endif %}
+
+  <h2>What this page checks</h2>
+  <p>
+    That the application is up and its database responds. It reports a summary deliberately:
+    detailed readiness diagnostics belong in the operator's tooling, not on a public page in front
+    of a payments system.
+  </p>
+
+  <h2>What it cannot tell you</h2>
+  <p>
+    Whether <b>a payment provider</b> is having an outage. If Stripe, PayPal, Square or a blockchain
+    is struggling, this page can still say OK while that route fails — check the provider's own
+    status page, and remember a payment's real state is the one on
+    <a href="/payments/">your payments</a>, not the browser you were redirected back to.
+  </p>
+
+  <h2>If a payment looks stuck</h2>
+  <p>
+    Wait for the provider's webhook rather than retrying: Fox Pay settles on the signed event, so a
+    payment that has been taken will catch up on its own, usually within a minute. Paying twice
+    because a page looked wrong is the one thing worth avoiding.
+  </p>
+
+  <p class="muted">
+    Machine-readable: <a href="/healthz/"><code>/healthz/</code></a>. Notable changes:
+    <a href="/changelog/">changelog</a>.
+  </p>
+</article>
+{% endblock %}

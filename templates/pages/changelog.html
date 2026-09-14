@@ -1,0 +1,67 @@
+{% extends "payments/base.html" %}
+{% block title %}Changelog · Fox Pay{% endblock %}
+{% block content %}
+<article class="account-section prose changelog">
+  <h1>Changelog</h1>
+  <p class="muted">What has actually shipped, newest first.</p>
+
+  <section>
+    <h2>2026-09-14 — Information pages</h2>
+    <ul>
+      <li>About, Terms, Privacy, Acceptable use, FAQ, Support, Status and this changelog, linked
+        from every footer.</li>
+      <li>The privacy page is specific about the one thing that matters most here: card numbers
+        never reach Fox Pay, and what it does hold is written out.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>2026-09-13 — PayPal</h2>
+    <ul>
+      <li>PayPal Checkout joins Stripe as a card and wallet route: an Orders v2 order, an approval
+        at PayPal, and a capture before anything is marked paid — approval alone is not payment.</li>
+      <li>The webhook receiver verifies events through PayPal's own signature check and refuses a
+        capture whose amount or currency does not match the intent.</li>
+      <li>Checkout names each option's provider, and amounts render as money rather than as minor
+        units.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>2026-09-13 — Accounts, saved methods and theme</h2>
+    <ul>
+      <li>A TG11 account dashboard: your payments, orders, subscriptions, saved payment methods and
+        connected applications in one place.</li>
+      <li>Saving or removing a card asks you to re-prove it is you first.</li>
+      <li>A light and dark theme that remembers your choice.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>2026-09-13 — Square and crypto callbacks</h2>
+    <ul>
+      <li>Signed Square webhook receiver with a setup command, keyed per merchant and provider.</li>
+      <li>NOWPayments hosted crypto callbacks verified by signature and matched against the invoice
+        amount before an intent settles.</li>
+      <li>Manual capture is refused where a provider does not really support it, rather than
+        pretending; live refunds are guarded and settled intents are preserved.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>2026-09-12 — Stripe and the first release</h2>
+    <ul>
+      <li>Stripe Checkout as the first card provider, with automatic tax behaviour and support for
+        long hosted checkout URLs.</li>
+      <li>The platform itself: merchants, API keys, payment intents and attempts, provider adapters,
+        a double-entry ledger, merchant webhooks and the hosted checkout.</li>
+      <li>Deployment waits for health before declaring success.</li>
+    </ul>
+  </section>
+
+  <p class="muted">
+    Fox Pay is early software; this list is maintained by hand from the release history rather than
+    generated, so it records what changed for you rather than every commit.
+  </p>
+</article>
+{% endblock %}

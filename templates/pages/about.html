@@ -1,0 +1,56 @@
+{% extends "payments/base.html" %}
+{% block title %}About · Fox Pay{% endblock %}
+{% block content %}
+<article class="account-section prose">
+  <h1>About Fox Pay</h1>
+
+  <p class="lead">
+    Fox Pay is a payment orchestration layer: one API and one checkout in front of several payment
+    providers, so a shop can take cards, wallets and crypto without rebuilding its checkout for
+    each one.
+  </p>
+
+  <h2>What it does</h2>
+  <ul>
+    <li>Creates a <b>payment intent</b> for a merchant — an amount, a currency, a description.</li>
+    <li>Offers the payer a hosted checkout with whichever routes that merchant has enabled:
+      Stripe Checkout, PayPal, Square, or a non-custodial crypto invoice.</li>
+    <li>Settles the intent when the provider says the money actually moved — verified through that
+      provider's own signed webhooks, never on the payer's say-so.</li>
+    <li>Keeps a normalised record of every attempt, a double-entry ledger, and merchant webhooks so
+      the shop's own system hears about it.</li>
+  </ul>
+
+  <h2>What it deliberately does not do</h2>
+  <p>
+    This is the important half. Fox Pay is not a bank, an acquirer or a card processor, and it is
+    careful about where its responsibility ends:
+  </p>
+  <ul>
+    <li><b>Card details never touch it.</b> Card entry, card storage, acquiring, 3-D Secure and card
+      network certification all happen at the provider. Fox Pay holds provider references, never a
+      card number.</li>
+    <li><b>It does not hold your money.</b> Funds move between the payer, the provider and the
+      merchant; Fox Pay is not a custodian and crypto invoices are non-custodial.</li>
+    <li><b>It does not do KYC/KYB or lending</b>, and it is not the merchant of record for anything
+      you buy — the shop you bought from is.</li>
+  </ul>
+
+  <h2>Where it is in its life</h2>
+  <p>
+    Fox Pay is early software running in production for TG11's own services. It is honest about
+    that on purpose: features that are not finished are marked as unavailable rather than faked,
+    and the <a href="/changelog/">changelog</a> is the real list of what has shipped.
+  </p>
+
+  <h2>Who runs it</h2>
+  <p>
+    Fox Pay is operated by <b>TG11 LLC</b>, doing business as Fox Pay. Sign-in is shared with the
+    other TG11 services through <a href="https://accounts.tg11.org">TG11 Accounts</a>.
+  </p>
+  <p>
+    Questions: <a href="mailto:support@tg11.org">support@tg11.org</a>, or the
+    <a href="/support/">support page</a>.
+  </p>
+</article>
+{% endblock %}

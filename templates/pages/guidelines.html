@@ -1,0 +1,62 @@
+{% extends "payments/base.html" %}
+{% block title %}Acceptable Use · Fox Pay{% endblock %}
+{% block content %}
+<article class="account-section prose">
+  <h1>Acceptable use</h1>
+  {% include "pages/_meta.html" %}
+
+  <p>
+    Payments attract abuse, and a payment route is only as welcome as the businesses on it. These
+    rules apply to every merchant using Fox Pay, and to anyone paying through it. The providers
+    behind us have their own lists too — theirs apply on top of ours, and theirs can be stricter.
+  </p>
+
+  <h2>Businesses we will not route</h2>
+  <ul>
+    <li>Anything illegal where the merchant or the customer is, including controlled substances and
+      the paraphernalia around them.</li>
+    <li>Fraud in any dress: fake storefronts, undisclosed trials that bill later, deceptive
+      subscriptions, "guaranteed returns", or selling something you cannot deliver.</li>
+    <li>Stolen goods, stolen data, credentials, carding tools, malware, exploit kits or DDoS
+      services.</li>
+    <li>Counterfeit goods and infringement of somebody else's trademark or copyright.</li>
+    <li>Weapons, ammunition and explosives.</li>
+    <li>Human exploitation of any kind, and any sexual content involving minors — this one gets
+      reported, not just refused.</li>
+    <li>Gambling, lotteries and betting without the licence the jurisdiction requires.</li>
+    <li>Pyramid schemes, multi-level marketing, and get-rich-quick programmes.</li>
+    <li>Money transmission, currency exchange, debt collection and payday lending — Fox Pay is not
+      licensed for financial services and will not be used as a way around that.</li>
+    <li>Mixing, tumbling or anything designed to obscure where crypto came from.</li>
+  </ul>
+
+  <h2>How to behave on the platform</h2>
+  <ul>
+    <li>Describe charges honestly. What the payer sees at checkout should match what appears on
+      their statement, and your refund policy should be findable before they pay.</li>
+    <li>Do not test with other people's cards, and do not run card-testing traffic — sequences of
+      small authorisations against many cards get an account stopped immediately.</li>
+    <li>Do not use the API to probe or enumerate: no brute-forcing intent ids, no scraping, no
+      replaying webhooks you did not receive.</li>
+    <li>Keep your keys and webhook secrets out of client-side code and out of public repositories.</li>
+    <li>Route real money through real providers. Sandbox credentials belong in the sandbox
+      environment.</li>
+  </ul>
+
+  <h2>Security research</h2>
+  <p>
+    If you find a vulnerability, email <a href="mailto:support@tg11.org">support@tg11.org</a> with
+    enough detail to reproduce it and give us a reasonable chance to fix it before you publish. Do
+    not take, alter or keep other people's payment data while you look, and do not run
+    denial-of-service or automated scanning against the live service.
+  </p>
+
+  <h2>What happens if these are broken</h2>
+  <p>
+    Depending on severity: a warning, a route disabled, payouts to the merchant paused, the API key
+    revoked, the account suspended, and — where the law requires it or someone is being harmed —
+    a report to the relevant authority and to the provider involved. We tell an account what
+    happened and why unless we are legally barred from doing so.
+  </p>
+</article>
+{% endblock %}

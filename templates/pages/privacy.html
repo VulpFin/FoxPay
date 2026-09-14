@@ -1,0 +1,101 @@
+{% extends "payments/base.html" %}
+{% block title %}Privacy Policy · Fox Pay{% endblock %}
+{% block content %}
+<article class="account-section prose">
+  <h1>Privacy Policy</h1>
+  {% include "pages/_meta.html" %}
+
+  <p>
+    Fox Pay is operated by <b>TG11 LLC</b>, doing business as Fox Pay. Handling payments means
+    handling data carefully, so this page is specific about what exists, what does not, and where
+    it goes.
+  </p>
+
+  <h2>1. What Fox Pay never stores</h2>
+  <p>
+    <b>Card numbers, CVVs, expiry dates and bank credentials.</b> Card entry happens on the
+    provider's own hosted page. What comes back to us is a reference and, at most, a brand and the
+    last four digits so you can tell two saved methods apart. There is no card data in this
+    database to lose.
+  </p>
+
+  <h2>2. What it does store</h2>
+  <ul>
+    <li><b>Payment records:</b> amount, currency, description, status, timestamps, the merchant, and
+      the provider's reference for each attempt.</li>
+    <li><b>Saved payment methods</b>, if you save one: the provider's token plus a display label —
+      never the instrument itself.</li>
+    <li><b>Account:</b> your TG11 identity (a UUID), email address and display name, and which
+      merchants you have paid.</li>
+    <li><b>Provider events:</b> the signed webhook payloads providers send us, kept so a payment can
+      be reconciled and an event is never processed twice.</li>
+    <li><b>Ledger and audit entries</b> recording what happened to a payment and what an operator or
+      an API key did.</li>
+    <li><b>Merchant credentials</b> (API keys hashed, provider secrets encrypted at rest).</li>
+    <li><b>Operational data:</b> IP address, user agent, request ids and server logs.</li>
+  </ul>
+
+  <h2>3. Where it goes</h2>
+  <ul>
+    <li><b>To the payment provider</b> you are paying through — the amount, currency, an order
+      reference and whatever they need to take the payment. Their privacy policy governs that leg:
+      <a href="https://stripe.com/privacy" rel="noopener">Stripe</a>,
+      <a href="https://www.paypal.com/us/legalhub/privacy-full" rel="noopener">PayPal</a>,
+      <a href="https://squareup.com/us/en/legal/general/privacy" rel="noopener">Square</a>, or the
+      crypto processor for a crypto invoice.</li>
+    <li><b>To the merchant</b> you bought from: the payment's status, amount and reference, so they
+      can fulfil the order.</li>
+    <li><b>To TG11 Accounts</b>, for sign-in only.</li>
+    <li>Nowhere else, unless the law requires it or we need it to investigate fraud or abuse.</li>
+  </ul>
+  <p>Nothing here is sold, and there is no advertising or third-party tracking on this site.</p>
+
+  <h2>4. Why we keep it</h2>
+  <p>
+    To take and settle payments you asked for, to show you your own history, to reconcile money
+    with providers and merchants, to detect fraud and abuse, and to meet the record-keeping
+    obligations that come with handling financial transactions.
+  </p>
+
+  <h2>5. How long</h2>
+  <ul>
+    <li>Payment, ledger and audit records: kept for the period financial record-keeping requires —
+      expect years, not weeks. These are the records that prove what happened to your money.</li>
+    <li>Saved payment methods: until you remove them.</li>
+    <li>Provider events: kept as long as they may be needed to reconcile, then pruned.</li>
+    <li>Server logs: a short operational window.</li>
+    <li>Backups: rolling, so deleted rows may persist briefly after they leave the live database.</li>
+  </ul>
+
+  <h2>6. Your controls</h2>
+  <ul>
+    <li>Saved payment methods can be removed from
+      <a href="/payment-methods/">Payment methods</a>; removing one also deletes the provider token.</li>
+    <li>Ask <a href="mailto:support@tg11.org">support@tg11.org</a> for a copy of your data, or to
+      close your account. We can delete an account and its saved methods, but we cannot delete the
+      transaction records the law requires us to keep — we will say which is which.</li>
+    <li>Cookies here are the session and CSRF cookies needed to sign in, plus your light/dark theme
+      choice. No advertising or analytics cookies.</li>
+  </ul>
+
+  <h2>7. Security</h2>
+  <p>
+    Provider secrets and merchant credentials are encrypted at rest, API keys are stored hashed,
+    webhooks are verified against each provider's signature before anything is believed, and
+    payment amounts are checked against the intent before a payment is marked paid. Tokens are
+    never written to logs. If a breach affects you, we will tell you.
+  </p>
+
+  <h2>8. Children</h2>
+  <p>Fox Pay is not intended for anyone under the minimum age for digital consent where they live.</p>
+
+  <h2>9. Where it runs</h2>
+  <p>Fox Pay runs on servers in the United States; providers may process data elsewhere.</p>
+
+  <h2>10. Contact</h2>
+  <p>
+    Privacy questions, data requests and deletion requests:
+    <a href="mailto:support@tg11.org">support@tg11.org</a>.
+  </p>
+</article>
+{% endblock %}

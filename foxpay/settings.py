@@ -32,6 +32,7 @@ INSTALLED_APPS = [
     "django.contrib.staticfiles",
     "apps.accounts",
     "apps.payments",
+    "apps.pages",
     "tg11_auth",
 ]
 

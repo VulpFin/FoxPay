@@ -1,0 +1,57 @@
+{% extends "payments/base.html" %}
+{% block title %}Support · Fox Pay{% endblock %}
+{% block content %}
+<article class="account-section prose">
+  <h1>Support</h1>
+
+  <p class="lead">
+    Email <a href="mailto:support@tg11.org">support@tg11.org</a>. A person reads it.
+  </p>
+
+  <h2>Start with the merchant if it is about an order</h2>
+  <p>
+    Fox Pay moves the money; the shop you bought from owns the order. Refunds, cancellations,
+    delivery and "this is not what I ordered" all get resolved faster with them. Come to us when
+    the payment itself misbehaved — charged twice, stuck in <i>action required</i>, a refund that
+    the merchant says they issued but you never received.
+  </p>
+
+  <h2>What to include</h2>
+  <ul>
+    <li>The payment reference (<code>pi_…</code>) if you have it, or the amount, currency and date.</li>
+    <li>The merchant's name.</li>
+    <li>The last four digits of the card or the wallet you used — never the full number, and never
+      the CVV. Nobody at Fox Pay will ever ask you for those.</li>
+    <li>For crypto: the invoice and the transaction hash.</li>
+    <li>What you expected to happen, and what happened instead.</li>
+  </ul>
+
+  <h2>Unrecognised charge</h2>
+  <p>
+    Sign in and check <a href="/payments/">your payments</a> — the merchant's name is on each one.
+    If it is still not familiar, write to us with the amount, date and last four digits and we will
+    identify the merchant. You can always dispute a charge with your bank; that right is not
+    affected by contacting us first.
+  </p>
+
+  <h2>Merchants</h2>
+  <p>
+    Integration questions, webhook problems, a key you need rotated, or a provider you want enabled:
+    same address, and include your merchant slug, the environment (test or live) and a request id
+    from the response if you have one. If a key has leaked, say so in the subject line and we will
+    revoke it before anything else.
+  </p>
+
+  <h2>Security reports</h2>
+  <p>
+    Send vulnerabilities to the same address with enough detail to reproduce them. Please read the
+    short rules on the <a href="/guidelines/">acceptable use page</a> first.
+  </p>
+
+  <p class="muted">
+    Fox Pay is early software run by a small operation, so replies come when a person is at a
+    keyboard rather than within a contractual window. Anything involving money moving incorrectly
+    goes to the front of the queue.
+  </p>
+</article>
+{% endblock %}
