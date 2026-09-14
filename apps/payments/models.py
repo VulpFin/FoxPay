@@ -64,6 +64,7 @@ class Merchant(TimeStampedModel):
     default_currency = models.CharField(max_length=3, default="USD")
     status = models.CharField(max_length=24, choices=STATUS_CHOICES, default=STATUS_PENDING)
     live_payments_enabled = models.BooleanField(default=False)
+    allow_legacy_provider_configs = models.BooleanField(default=False)
     approved_at = models.DateTimeField(blank=True, null=True)
     approved_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, related_name="approved_merchants", blank=True, null=True)
     reviewed_at = models.DateTimeField(blank=True, null=True)
@@ -137,6 +138,90 @@ class MerchantAgreementAcceptance(models.Model):
         raise ValueError("Agreement acceptances are append-only.")
 
 
+class MerchantProviderConnection(TimeStampedModel):
+    STATUS_PENDING = "pending"
+    STATUS_ACTIVE = "active"
+    STATUS_RESTRICTED = "restricted"
+    STATUS_REVOKED = "revoked"
+    STATUS_ERROR = "error"
+    STATUS_CHOICES = [
+        (STATUS_PENDING, "Pending"),
+        (STATUS_ACTIVE, "Active"),
+        (STATUS_RESTRICTED, "Restricted"),
+        (STATUS_REVOKED, "Revoked"),
+        (STATUS_ERROR, "Error"),
+    ]
+    PROVIDER_CHOICES = [(name, name.title()) for name in ("stripe", "square", "paypal", "nowpayments")]
+
+    uuid = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    merchant = models.ForeignKey(Merchant, on_delete=models.CASCADE, related_name="provider_connections")
+    provider = models.CharField(max_length=24, choices=PROVIDER_CHOICES)
+    environment = models.CharField(max_length=12, default="test")
+    status = models.CharField(max_length=24, choices=STATUS_CHOICES, default=STATUS_PENDING)
+    authorization_method = models.CharField(max_length=32)
+    external_account_id = models.CharField(max_length=180, blank=True)
+    granted_scopes = models.JSONField(default=list, blank=True)
+    capabilities = models.JSONField(default=list, blank=True)
+    encrypted_access_token = models.TextField(blank=True)
+    encrypted_refresh_token = models.TextField(blank=True)
+    token_expires_at = models.DateTimeField(blank=True, null=True)
+    connected_at = models.DateTimeField(blank=True, null=True)
+    revoked_at = models.DateTimeField(blank=True, null=True)
+    last_verified_at = models.DateTimeField(blank=True, null=True)
+    last_error_at = models.DateTimeField(blank=True, null=True)
+    last_error_code = models.CharField(max_length=80, blank=True)
+    metadata = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["merchant", "provider", "environment", "external_account_id"],
+                condition=~models.Q(external_account_id=""),
+                name="unique_merchant_provider_account",
+            ),
+        ]
+
+    def set_access_token(self, value):
+        self.encrypted_access_token = encrypt_secret(value)
+
+    def access_token(self):
+        return decrypt_secret(self.encrypted_access_token)
+
+    def set_refresh_token(self, value):
+        self.encrypted_refresh_token = encrypt_secret(value)
+
+    def refresh_token(self):
+        return decrypt_secret(self.encrypted_refresh_token)
+
+    def clear_tokens(self):
+        self.encrypted_access_token = ""
+        self.encrypted_refresh_token = ""
+        self.token_expires_at = None
+
+    def __str__(self):
+        return f"{self.merchant} {self.provider} {self.environment} ({self.status})"
+
+
+class ProviderOnboardingSession(models.Model):
+    merchant = models.ForeignKey(Merchant, on_delete=models.CASCADE, related_name="onboarding_sessions")
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="provider_onboarding_sessions")
+    provider = models.CharField(max_length=24)
+    environment = models.CharField(max_length=12)
+    state_hash = models.CharField(max_length=64, unique=True)
+    requested_scopes = models.JSONField(default=list, blank=True)
+    encrypted_pkce_verifier = models.TextField(blank=True)
+    expires_at = models.DateTimeField()
+    consumed_at = models.DateTimeField(blank=True, null=True)
+    return_path = models.CharField(max_length=500, default="/seller/")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def set_pkce_verifier(self, value):
+        self.encrypted_pkce_verifier = encrypt_secret(value)
+
+    def pkce_verifier(self):
+        return decrypt_secret(self.encrypted_pkce_verifier)
+
+
 class ProviderConfig(TimeStampedModel):
     KIND_CARD = "card"
     KIND_CRYPTO = "crypto"
@@ -148,6 +233,7 @@ class ProviderConfig(TimeStampedModel):
 
     uuid = models.UUIDField(default=uuid.uuid4, db_index=True, editable=False)
     merchant = models.ForeignKey(Merchant, on_delete=models.CASCADE, related_name="provider_configs")
+    connection = models.ForeignKey(MerchantProviderConnection, on_delete=models.PROTECT, related_name="provider_configs", blank=True, null=True)
     kind = models.CharField(max_length=16, choices=KIND_CHOICES)
     provider = models.CharField(max_length=40, help_text="Merchant-facing provider code, such as acquirer-us or btc-wallet-primary.")
     adapter = models.CharField(max_length=40, blank=True, help_text="Fox Pay adapter type, such as hosted, mock, or manual. Defaults to provider.")

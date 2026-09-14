@@ -12,6 +12,7 @@ from .models import (
     LedgerTransaction,
     Merchant,
     MerchantAgreementAcceptance,
+    MerchantProviderConnection,
     MerchantMembership,
     MerchantWebhookAttempt,
     MerchantWebhookEndpoint,
@@ -41,7 +42,7 @@ class MerchantAdmin(admin.ModelAdmin):
     list_display = ("name", "slug", "owner", "status", "live_payments_enabled", "default_currency", "created_at")
     list_filter = ("status", "live_payments_enabled", "card_provider", "crypto_provider")
     search_fields = ("name", "slug", "support_email")
-    readonly_fields = ("status", "live_payments_enabled", "approved_at", "approved_by", "reviewed_at", "reviewed_by", "suspended_at", "suspension_reason", "risk_level")
+    readonly_fields = ("status", "live_payments_enabled", "allow_legacy_provider_configs", "approved_at", "approved_by", "reviewed_at", "reviewed_by", "suspended_at", "suspension_reason", "risk_level")
     inlines = [ProviderConfigInline]
 
 
@@ -49,6 +50,23 @@ class MerchantAdmin(admin.ModelAdmin):
 class MerchantAgreementAcceptanceAdmin(admin.ModelAdmin):
     list_display = ("merchant", "user", "agreement_version", "accepted_at")
     readonly_fields = ("merchant", "user", "agreement_version", "agreement_hash", "acceptable_use_version", "acceptable_use_hash", "accepted_at", "request_ip", "user_agent", "supersedes")
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(MerchantProviderConnection)
+class MerchantProviderConnectionAdmin(admin.ModelAdmin):
+    list_display = ("merchant", "provider", "environment", "status", "authorization_method", "last_verified_at")
+    list_filter = ("provider", "environment", "status")
+    search_fields = ("merchant__name", "external_account_id")
+    exclude = ("encrypted_access_token", "encrypted_refresh_token")
 
     def has_add_permission(self, request):
         return False

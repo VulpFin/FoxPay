@@ -99,6 +99,7 @@ class PaymentIntentAPITests(TestCase):
             slug="vulpfin",
             status=Merchant.STATUS_ACTIVE,
             live_payments_enabled=True,
+            allow_legacy_provider_configs=True,
             crypto_addresses={"BTC": "bc1qtestaddress"},
         )
         _, self.raw_key = APIKey.issue(self.merchant, "Test key")
