@@ -1,0 +1,4 @@
+<div class="section-heading"><h2>Provider connections</h2></div>
+{% if connections %}<div class="table-scroll"><table class="account-table"><thead><tr><th>Provider</th><th>Mode</th><th>Status</th><th>Account</th><th>Last verified</th></tr></thead><tbody>
+  {% for connection in connections %}<tr><td><strong>{{ connection.get_provider_display }}</strong></td><td>{{ connection.environment }}</td><td><span class="state-pill">{{ connection.get_status_display }}</span></td><td class="mono">{{ connection.external_account_id|default:'--' }}</td><td>{{ connection.last_verified_at|date:'M j, Y H:i'|default:'--' }}</td></tr>{% endfor %}
+</tbody></table></div>{% else %}<p class="empty-state">No provider connections.</p>{% endif %}

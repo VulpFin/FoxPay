@@ -630,3 +630,16 @@ th {
 .review-form { display: grid; min-width: 180px; gap: 6px; }
 .seller-review-table { min-width: 840px; }
 .seller-review-table td:first-child { min-width: 280px; }
+.seller-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 20px; margin: 28px 0; }
+.seller-summary div { border-top: 1px solid var(--line); padding-top: 12px; }
+.seller-summary dd { margin-top: 5px; overflow-wrap: anywhere; }
+.seller-inline-form { display: flex; align-items: end; flex-wrap: wrap; gap: 8px 12px; margin: 20px 0 24px; }
+.seller-inline-form label { font-size: 13px; font-weight: 700; }
+.seller-inline-form input, .seller-inline-form select { min-height: 42px; min-width: 160px; max-width: 100%; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--ink); font: inherit; }
+.seller-inline-form input[type="url"] { flex: 1 1 280px; }
+.seller-row-actions { display: flex; flex-wrap: wrap; gap: 7px; }
+.seller-row-actions button { min-height: 34px; padding: 0 10px; white-space: nowrap; }
+.seller-row-actions select { min-height: 34px; max-width: 150px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--ink); }
+.seller-subheading { margin-top: 36px; }
+.one-time-secret { display: grid; gap: 8px; }
+.one-time-secret code { display: block; overflow-wrap: anywhere; user-select: all; }

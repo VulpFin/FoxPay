@@ -1,0 +1,4 @@
+<div class="section-heading"><h2>Payments</h2></div>
+{% if payments %}<div class="table-scroll"><table class="account-table"><thead><tr><th>Payment</th><th>Amount</th><th>Status</th><th>Created</th></tr></thead><tbody>
+  {% for payment in payments %}<tr><td><strong class="mono">{{ payment.public_id }}</strong><small>{{ payment.reference|default:payment.description }}</small></td><td>{{ payment.amount }} {{ payment.currency }}</td><td>{{ payment.get_status_display }}</td><td>{{ payment.created_at|date:'M j, Y H:i' }}</td></tr>{% endfor %}
+</tbody></table></div>{% else %}<p class="empty-state">No payments.</p>{% endif %}

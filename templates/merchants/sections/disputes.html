@@ -1,0 +1,4 @@
+<div class="section-heading"><h2>Disputes</h2></div>
+{% if disputes %}<div class="table-scroll"><table class="account-table"><thead><tr><th>Payment</th><th>Provider</th><th>Reason</th><th>Status</th><th>Evidence due</th></tr></thead><tbody>
+  {% for dispute in disputes %}<tr><td class="mono">{{ dispute.payment_intent.public_id }}</td><td>{{ dispute.provider }}</td><td>{{ dispute.reason }}</td><td>{{ dispute.status }}</td><td>{{ dispute.evidence_due_at|date:'M j, Y H:i'|default:'--' }}</td></tr>{% endfor %}
+</tbody></table></div>{% else %}<p class="empty-state">No disputes.</p>{% endif %}

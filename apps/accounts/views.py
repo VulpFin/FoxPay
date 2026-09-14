@@ -1,5 +1,3 @@
-import time
-
 from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
@@ -22,7 +20,7 @@ from apps.payments.models import (
 from apps.payments.adapters.stripe_methods import create_setup_checkout, detach_saved_method
 from apps.payments.permissions import routing_block_reason
 
-from .identity import linked_subject
+from .identity import fresh_tg11_mfa, linked_subject
 
 
 @never_cache
@@ -110,18 +108,13 @@ def connections(request):
     return dashboard(request, "connections")
 
 
-def _fresh_tg11_mfa(request):
-    auth_time = request.session.get("foxpay_tg11_auth_time", 0)
-    return bool(request.session.get("foxpay_tg11_mfa") and auth_time and 0 <= time.time() - auth_time <= 300)
-
-
 @login_required
 @require_POST
 def add_payment_method(request, merchant_slug, provider):
     subject = linked_subject(request.user)
     if not subject:
         return HttpResponseForbidden("Connect a TG11 account first.")
-    if not _fresh_tg11_mfa(request):
+    if not fresh_tg11_mfa(request):
         return render(request, "accounts/step_up.html", status=403)
     config = get_object_or_404(
         ProviderConfig,
@@ -164,7 +157,7 @@ def remove_payment_method(request, method_uuid):
     subject = linked_subject(request.user)
     if not subject:
         return HttpResponseForbidden("Connect a TG11 account first.")
-    if not _fresh_tg11_mfa(request):
+    if not fresh_tg11_mfa(request):
         return render(request, "accounts/step_up.html", status=403)
     method = get_object_or_404(
         PaymentMethodReference.objects.select_related("customer", "merchant", "provider_config"),

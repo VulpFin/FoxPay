@@ -26,6 +26,7 @@ from .models import (
     IdempotencyRecord,
     LedgerTransaction,
     Merchant,
+    MerchantAllowedReturnOrigin,
     MerchantWebhookEndpoint,
     PaymentAttempt,
     PaymentIntent,
@@ -102,6 +103,7 @@ class PaymentIntentAPITests(TestCase):
             allow_legacy_provider_configs=True,
             crypto_addresses={"BTC": "bc1qtestaddress"},
         )
+        MerchantAllowedReturnOrigin.objects.create(merchant=self.merchant, origin="https://merchant.example")
         _, self.raw_key = APIKey.issue(self.merchant, "Test key")
 
     def test_create_payment_intent_with_card_and_crypto_options(self):

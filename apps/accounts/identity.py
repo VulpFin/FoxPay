@@ -1,4 +1,5 @@
 import uuid
+import time
 
 from tg11_auth.models import TG11IdentityLink
 from tg11_auth.services import AuthError
@@ -31,3 +32,8 @@ def linked_subject(user):
         return uuid.UUID(link.subject)
     except (TypeError, ValueError):
         return None
+
+
+def fresh_tg11_mfa(request, seconds=300):
+    auth_time = request.session.get("foxpay_tg11_auth_time", 0)
+    return bool(request.session.get("foxpay_tg11_mfa") and auth_time and 0 <= time.time() - auth_time <= seconds)

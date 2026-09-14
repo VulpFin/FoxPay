@@ -222,6 +222,17 @@ class ProviderOnboardingSession(models.Model):
         return decrypt_secret(self.encrypted_pkce_verifier)
 
 
+class MerchantAllowedReturnOrigin(TimeStampedModel):
+    merchant = models.ForeignKey(Merchant, on_delete=models.CASCADE, related_name="allowed_return_origins")
+    origin = models.CharField(max_length=255)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=["merchant", "origin"], name="unique_merchant_return_origin")]
+
+    def __str__(self):
+        return f"{self.merchant} {self.origin}"
+
+
 class ProviderConfig(TimeStampedModel):
     KIND_CARD = "card"
     KIND_CRYPTO = "crypto"
@@ -700,6 +711,9 @@ class MerchantWebhookEndpoint(TimeStampedModel):
     enabled_events = models.JSONField(default=list, blank=True)
     secret_hash = models.CharField(max_length=256)
     encrypted_secret = models.TextField(blank=True)
+    pending_secret_hash = models.CharField(max_length=256, blank=True)
+    pending_encrypted_secret = models.TextField(blank=True)
+    pending_secret_created_at = models.DateTimeField(blank=True, null=True)
     is_active = models.BooleanField(default=True)
 
     @classmethod
@@ -720,6 +734,26 @@ class MerchantWebhookEndpoint(TimeStampedModel):
 
     def reveal_secret(self):
         return decrypt_secret(self.encrypted_secret)
+
+    def begin_secret_rotation(self):
+        if self.pending_secret_hash:
+            raise ValueError("A webhook secret rotation is already pending.")
+        secret = f"whsec_{secrets.token_urlsafe(32)}"
+        self.pending_secret_hash = make_password(secret)
+        self.pending_encrypted_secret = encrypt_secret(secret)
+        self.pending_secret_created_at = timezone.now()
+        self.save(update_fields=["pending_secret_hash", "pending_encrypted_secret", "pending_secret_created_at", "updated_at"])
+        return secret
+
+    def activate_secret_rotation(self):
+        if not self.pending_secret_hash or not self.pending_encrypted_secret:
+            raise ValueError("No pending webhook secret rotation.")
+        self.secret_hash = self.pending_secret_hash
+        self.encrypted_secret = self.pending_encrypted_secret
+        self.pending_secret_hash = ""
+        self.pending_encrypted_secret = ""
+        self.pending_secret_created_at = None
+        self.save(update_fields=["secret_hash", "encrypted_secret", "pending_secret_hash", "pending_encrypted_secret", "pending_secret_created_at", "updated_at"])
 
 
 class MerchantWebhookEvent(TimeStampedModel):

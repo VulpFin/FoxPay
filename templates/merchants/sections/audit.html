@@ -1,0 +1,4 @@
+<div class="section-heading"><h2>Activity</h2></div>
+{% if audit_events %}<div class="table-scroll"><table class="account-table"><thead><tr><th>Event</th><th>Actor</th><th>Time</th></tr></thead><tbody>
+  {% for event in audit_events %}<tr><td>{{ event.action }}</td><td>{{ event.actor.email|default:'System' }}</td><td>{{ event.created_at|date:'M j, Y H:i' }}</td></tr>{% endfor %}
+</tbody></table></div>{% else %}<p class="empty-state">No activity yet.</p>{% endif %}

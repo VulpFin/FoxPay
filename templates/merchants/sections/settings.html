@@ -1,0 +1,7 @@
+<div class="section-heading"><h2>Return origins</h2></div>
+<form method="post" action="{% url 'seller_add_return_origin' merchant.slug %}" class="seller-inline-form">{% csrf_token %}<label for="return-origin">Origin</label><input id="return-origin" name="origin" type="url" maxlength="1000" placeholder="https://shop.example.com" required><button type="submit">Add origin</button></form>
+{% if origins %}<div class="table-scroll"><table class="account-table"><thead><tr><th>Allowed origin</th><th></th></tr></thead><tbody>
+  {% for item in origins %}<tr><td class="mono">{{ item.origin }}</td><td><form method="post" action="{% url 'seller_remove_return_origin' merchant.slug item.pk %}">{% csrf_token %}<button type="submit" class="secondary">Remove</button></form></td></tr>{% endfor %}
+</tbody></table></div>{% else %}<p class="empty-state">No return origins registered.</p>{% endif %}
+<div class="section-heading seller-subheading"><h2>Business profile</h2></div>
+<dl class="seller-summary"><div><dt>Legal name</dt><dd>{{ merchant.legal_name|default:'--' }}</dd></div><div><dt>Website</dt><dd>{{ merchant.website_url|default:'--' }}</dd></div><div><dt>Support</dt><dd>{{ merchant.support_email|default:'--' }}</dd></div><div><dt>Category</dt><dd>{{ merchant.business_category|default:'--' }}</dd></div></dl>

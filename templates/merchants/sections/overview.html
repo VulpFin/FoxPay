@@ -1,0 +1,8 @@
+<div class="metrics">
+  <div><span>Live routing</span><strong>{% if merchant.live_payments_enabled and merchant.status == 'active' %}On{% else %}Off{% endif %}</strong></div>
+  <div><span>Payments</span><strong>{{ payment_count }}</strong></div>
+  <div><span>Active connections</span><strong>{{ connection_count }}</strong></div>
+</div>
+{% if merchant.status == 'pending' %}<p>Application submitted. Staff review is required before live payment routing can be enabled.</p>{% endif %}
+{% if merchant.suspension_reason %}<p class="flash">Routing notice: {{ merchant.suspension_reason }}</p>{% endif %}
+<dl class="seller-summary"><div><dt>Your role</dt><dd>{{ membership.get_role_display }}</dd></div><div><dt>Legal name</dt><dd>{{ merchant.legal_name|default:'--' }}</dd></div><div><dt>Country</dt><dd>{{ merchant.country|default:'--' }}</dd></div><div><dt>Open disputes</dt><dd>{{ dispute_count }}</dd></div></dl>

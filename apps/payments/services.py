@@ -15,6 +15,7 @@ from .ledger import record_payment_success, record_refund
 from .models import APIKey, Customer, IdempotencyRecord, Merchant, PaymentAttempt, PaymentIntent, ProviderEvent, Refund, WebhookDelivery
 from .permissions import routing_block_reason
 from .routing import provider_routes
+from .safe_urls import UnsafeURL, return_origin
 
 
 class APIError(Exception):
@@ -141,6 +142,19 @@ def validate_metadata(metadata):
     return metadata
 
 
+def validate_return_urls(merchant, success_url, cancel_url):
+    allowed = set(merchant.allowed_return_origins.values_list("origin", flat=True))
+    for field, value in (("success_url", success_url), ("cancel_url", cancel_url)):
+        if not value:
+            continue
+        try:
+            origin = return_origin(value)
+        except UnsafeURL as exc:
+            raise APIError(f"{field} is not a valid public URL.") from exc
+        if origin not in allowed:
+            raise APIError(f"{field} origin is not registered for this merchant.", code="return_origin_not_allowed")
+
+
 def get_or_create_customer(merchant, payload):
     customer_payload = payload.get("customer")
     if not customer_payload:
@@ -258,6 +272,7 @@ def create_payment_intent(request, merchant, payload, idempotency_key=""):
             code="manual_capture_unavailable",
         )
     metadata = validate_metadata(payload.get("metadata") or {})
+    validate_return_urls(merchant, payload.get("success_url", ""), payload.get("cancel_url", ""))
     customer = get_or_create_customer(merchant, payload)
     intent = PaymentIntent.objects.create(
         merchant=merchant,

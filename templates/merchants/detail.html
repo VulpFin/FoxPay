@@ -4,18 +4,18 @@
 <section class="account-section">
   <p class="eyebrow">Seller account</p>
   <div class="account-heading"><h1>{{ merchant.name }}</h1><span class="state-pill">{{ merchant.get_status_display }}</span></div>
-  <div class="metrics">
-    <div><span>Live routing</span><strong>{% if merchant.live_payments_enabled and merchant.status == 'active' %}On{% else %}Off{% endif %}</strong></div>
-    <div><span>Your role</span><strong>{{ membership.get_role_display }}</strong></div>
-    <div><span>Country</span><strong>{{ merchant.country|default:'--' }}</strong></div>
-  </div>
-  {% if merchant.status == 'pending' %}<p>Application submitted. Staff review is required before live payment routing can be enabled.</p>{% endif %}
-  {% if merchant.suspension_reason %}<p class="flash">Routing notice: {{ merchant.suspension_reason }}</p>{% endif %}
-  <div class="table-scroll"><table class="account-table"><tbody>
-    <tr><th>Legal name</th><td>{{ merchant.legal_name|default:'--' }}</td></tr>
-    <tr><th>Website</th><td>{% if merchant.website_url %}<a href="{{ merchant.website_url }}" rel="noopener noreferrer">{{ merchant.website_url }}</a>{% else %}--{% endif %}</td></tr>
-    <tr><th>Support</th><td>{{ merchant.support_email|default:'--' }}</td></tr>
-    <tr><th>Category</th><td>{{ merchant.business_category|default:'--' }}</td></tr>
-  </tbody></table></div>
+  <nav class="account-tabs" aria-label="Seller sections">
+    <a href="{% url 'seller_detail' merchant.slug %}" {% if section == 'overview' %}aria-current="page"{% endif %}>Overview</a>
+    <a href="{% url 'seller_section' merchant.slug 'providers' %}" {% if section == 'providers' %}aria-current="page"{% endif %}>Providers</a>
+    <a href="{% url 'seller_section' merchant.slug 'payments' %}" {% if section == 'payments' %}aria-current="page"{% endif %}>Payments</a>
+    <a href="{% url 'seller_section' merchant.slug 'disputes' %}" {% if section == 'disputes' %}aria-current="page"{% endif %}>Disputes</a>
+    {% if can_keys %}<a href="{% url 'seller_section' merchant.slug 'keys' %}" {% if section == 'keys' %}aria-current="page"{% endif %}>API keys</a>{% endif %}
+    {% if can_webhooks %}<a href="{% url 'seller_section' merchant.slug 'webhooks' %}" {% if section == 'webhooks' %}aria-current="page"{% endif %}>Webhooks</a>{% endif %}
+    {% if can_members %}<a href="{% url 'seller_section' merchant.slug 'members' %}" {% if section == 'members' %}aria-current="page"{% endif %}>Members</a>{% endif %}
+    {% if can_settings %}<a href="{% url 'seller_section' merchant.slug 'settings' %}" {% if section == 'settings' %}aria-current="page"{% endif %}>Settings</a>{% endif %}
+    <a href="{% url 'seller_section' merchant.slug 'audit' %}" {% if section == 'audit' %}aria-current="page"{% endif %}>Activity</a>
+  </nav>
+  {% if one_time_secret %}<div class="flash one-time-secret" role="status"><strong>Shown once</strong><code class="mono">{{ one_time_secret }}</code></div>{% endif %}
+  {% include section_template %}
 </section>
 {% endblock %}

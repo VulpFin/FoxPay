@@ -42,7 +42,7 @@ class MerchantAdmin(admin.ModelAdmin):
     list_display = ("name", "slug", "owner", "status", "live_payments_enabled", "default_currency", "created_at")
     list_filter = ("status", "live_payments_enabled", "card_provider", "crypto_provider")
     search_fields = ("name", "slug", "support_email")
-    readonly_fields = ("status", "live_payments_enabled", "allow_legacy_provider_configs", "approved_at", "approved_by", "reviewed_at", "reviewed_by", "suspended_at", "suspension_reason", "risk_level")
+    readonly_fields = ("status", "is_active", "live_payments_enabled", "allow_legacy_provider_configs", "approved_at", "approved_by", "reviewed_at", "reviewed_by", "suspended_at", "suspension_reason", "risk_level")
     inlines = [ProviderConfigInline]
 
 
@@ -206,7 +206,17 @@ class MerchantWebhookEndpointAdmin(admin.ModelAdmin):
     list_display = ("merchant", "url", "description", "is_active", "created_at")
     list_filter = ("is_active",)
     search_fields = ("merchant__name", "url", "description")
-    readonly_fields = ("secret_hash", "encrypted_secret", "created_at", "updated_at")
+    exclude = ("secret_hash", "encrypted_secret", "pending_secret_hash", "pending_encrypted_secret", "pending_secret_created_at")
+    readonly_fields = ("created_at", "updated_at")
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
 
 
 @admin.register(MerchantWebhookEvent)
