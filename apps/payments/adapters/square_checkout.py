@@ -29,9 +29,24 @@ class SquareCheckoutAdapter(PaymentProviderAdapter):
         if not config or config.adapter_name != "square":
             raise ImproperlyConfigured("Square checkout requires a Square provider config.")
         location_id = config.settings.get("location_id", "")
-        credential = config.credentials.filter(name="access_token", revoked_at__isnull=True).order_by("-last_rotated_at").first()
-        if not location_id or not credential:
+        connection = config.connection
+        token = ""
+        if connection and connection.authorization_method == "square_oauth":
+            from apps.payments.square_oauth import refresh_connection
+
+            if not refresh_connection(connection):
+                raise ImproperlyConfigured("Square seller authorization must be reconnected.")
+            connection.refresh_from_db()
+            if connection.status != connection.STATUS_ACTIVE or connection.revoked_at:
+                raise ImproperlyConfigured("Square seller authorization is not active.")
+            token = connection.access_token()
+        else:
+            credential = config.credentials.filter(name="access_token", revoked_at__isnull=True).order_by("-last_rotated_at").first()
+            token = credential.reveal_secret() if credential else ""
+        if not location_id or not token:
             raise ImproperlyConfigured("Square checkout requires a location_id and access_token.")
+        if config.settings.get("location_currency") and intent.currency.upper() != config.settings["location_currency"].upper():
+            raise ProviderAdapterError("Square location does not support this currency.")
         attempt = PaymentAttempt.objects.create(
             intent=intent,
             provider_config=config,
@@ -64,7 +79,7 @@ class SquareCheckoutAdapter(PaymentProviderAdapter):
                 f"{endpoint}/v2/online-checkout/payment-links",
                 json=body,
                 headers={
-                    "Authorization": f"Bearer {credential.reveal_secret()}",
+                    "Authorization": f"Bearer {token}",
                     "Square-Version": SQUARE_API_VERSION,
                 },
                 timeout=10,
@@ -80,6 +95,20 @@ class SquareCheckoutAdapter(PaymentProviderAdapter):
             if not link_id or not order_id or not parsed_url or parsed_url.scheme != "https" or parsed_url.hostname not in {"square.link", "sandbox.square.link"}:
                 raise ValueError("Square returned an incomplete payment link.")
         except (requests.RequestException, ValueError, TypeError) as exc:
+            if connection and connection.authorization_method == "square_oauth":
+                response = getattr(exc, "response", None)
+                if response is not None and getattr(response, "status_code", 0) in {401, 403}:
+                    try:
+                        errors = response.json().get("errors", [])
+                    except (AttributeError, TypeError, ValueError):
+                        errors = []
+                    error_code = next(
+                        (item.get("code") for item in errors if isinstance(item, dict) and isinstance(item.get("code"), str)),
+                        "UNAUTHORIZED",
+                    )
+                    from apps.payments.square_oauth import mark_connection_unhealthy
+
+                    mark_connection_unhealthy(connection, error_code)
             attempt.status = PaymentAttempt.STATUS_FAILED
             attempt.provider_status = "create_failed"
             attempt.failure_category = exc.__class__.__name__

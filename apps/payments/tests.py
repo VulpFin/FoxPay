@@ -823,7 +823,7 @@ class SquareWebhookTests(TestCase):
         self.assertEqual(ProviderEvent.objects.count(), 1)
         self.assertEqual(WebhookDelivery.objects.count(), 1)
         recorded = ProviderEvent.objects.get()
-        self.assertIsNone(recorded.merchant)
+        self.assertEqual(recorded.merchant, self.merchant)
         self.assertEqual(recorded.payload["status"], "COMPLETED")
         self.assertEqual(recorded.payload["resource_id"], "square-payment-1")
         self.assertNotIn("private-card-data", json.dumps(recorded.payload))

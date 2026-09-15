@@ -1,7 +1,6 @@
 from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
-from django.core.exceptions import PermissionDenied
 from django.db import IntegrityError, transaction
 from django.http import HttpResponseBadRequest, HttpResponseForbidden, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
@@ -10,24 +9,18 @@ from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST
 
-from apps.accounts.identity import fresh_tg11_mfa, linked_subject
+from apps.accounts.identity import fresh_tg11_mfa
 
 from .adapters.stripe_checkout import object_to_dict, stripe_module
-from .merchant_views import _seller_audit
-from .models import Merchant, MerchantProviderConnection, ProviderConfig
+from .merchant_views import _merchant_with_capability, _seller_audit
+from .models import MerchantProviderConnection, ProviderConfig
 from .onboarding import OnboardingStateError, begin_onboarding, consume_onboarding
-from .permissions import can_manage, member_merchants, merchant_membership
 from .stripe_connect import authorize_url, connect_available, disconnect_account, exchange_code, verify_account
 from .stripe_connect_events import handle_connect_event
 
 
 def _merchant_for_connection(request, slug):
-    if not linked_subject(request.user):
-        raise PermissionDenied
-    merchant = get_object_or_404(member_merchants(request.user), slug=slug)
-    if not can_manage(merchant_membership(request.user, merchant), "connections"):
-        raise PermissionDenied
-    return merchant
+    return _merchant_with_capability(request, slug, "connections")
 
 
 @login_required

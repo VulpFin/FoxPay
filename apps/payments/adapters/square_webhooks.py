@@ -55,6 +55,7 @@ def record_square_event(config, event):
         provider=provider,
         provider_event_id=event_id,
         defaults={
+            "merchant": config.merchant,
             "event_type": event_type,
             "normalized_event_type": "square.webhook.received",
             "payload": summary,

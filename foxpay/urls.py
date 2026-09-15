@@ -5,6 +5,7 @@ from .views import healthz
 from apps.accounts import views as account_views
 from apps.payments import merchant_views
 from apps.payments import stripe_connect_views
+from apps.payments import square_oauth_views
 
 
 urlpatterns = [
@@ -27,6 +28,11 @@ urlpatterns = [
     path("seller/<slug:slug>/stripe/<str:environment>/callback/", stripe_connect_views.stripe_connect_callback, name="seller_stripe_callback"),
     path("seller/<slug:slug>/stripe/<uuid:connection_uuid>/disconnect/", stripe_connect_views.disconnect_stripe_connect, name="seller_stripe_disconnect"),
     path("api/v1/webhooks/stripe/connect/<str:endpoint_environment>/", stripe_connect_views.stripe_connect_webhook, name="stripe_connect_webhook"),
+    path("seller/<slug:slug>/square/<str:environment>/connect/", square_oauth_views.begin_square_oauth, name="seller_square_connect"),
+    path("seller/<slug:slug>/square/<str:environment>/callback/", square_oauth_views.square_oauth_callback, name="seller_square_callback"),
+    path("seller/<slug:slug>/square/<uuid:connection_uuid>/location/", square_oauth_views.select_square_location, name="seller_square_location"),
+    path("seller/<slug:slug>/square/<uuid:connection_uuid>/disconnect/", square_oauth_views.disconnect_square_oauth, name="seller_square_disconnect"),
+    path("api/v1/webhooks/square/oauth/<str:environment>/", square_oauth_views.square_oauth_webhook, name="square_oauth_webhook"),
     path("seller/<slug:slug>/keys/create/", merchant_views.create_key, name="seller_create_key"),
     path("seller/<slug:slug>/keys/<uuid:key_uuid>/revoke/", merchant_views.revoke_key, name="seller_revoke_key"),
     path("seller/<slug:slug>/keys/<uuid:key_uuid>/rotate/", merchant_views.rotate_key, name="seller_rotate_key"),

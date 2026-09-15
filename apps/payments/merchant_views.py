@@ -89,10 +89,13 @@ def _render_detail(request, slug, section="overview", one_time_secret=""):
         context["connection_count"] = merchant.provider_connections.filter(status="active").count()
     elif section == "providers":
         from .stripe_connect import connect_available
+        from .square_oauth import oauth_available
 
         context["connections"] = merchant.provider_connections.order_by("provider", "environment", "created_at")
         context["stripe_connect_test_available"] = connect_available("test")
         context["stripe_connect_live_available"] = connect_available("live")
+        context["square_oauth_test_available"] = oauth_available("test")
+        context["square_oauth_live_available"] = oauth_available("live")
     elif section == "payments":
         context["payments"] = merchant.payment_intents.order_by("-created_at")[:100]
     elif section == "disputes":

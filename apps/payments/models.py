@@ -165,6 +165,7 @@ class MerchantProviderConnection(TimeStampedModel):
     encrypted_access_token = models.TextField(blank=True)
     encrypted_refresh_token = models.TextField(blank=True)
     token_expires_at = models.DateTimeField(blank=True, null=True)
+    token_refreshed_at = models.DateTimeField(blank=True, null=True)
     connected_at = models.DateTimeField(blank=True, null=True)
     revoked_at = models.DateTimeField(blank=True, null=True)
     last_verified_at = models.DateTimeField(blank=True, null=True)
@@ -202,6 +203,7 @@ class MerchantProviderConnection(TimeStampedModel):
         self.encrypted_access_token = ""
         self.encrypted_refresh_token = ""
         self.token_expires_at = None
+        self.token_refreshed_at = None
 
     def __str__(self):
         return f"{self.merchant} {self.provider} {self.environment} ({self.status})"
