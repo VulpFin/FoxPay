@@ -9,6 +9,7 @@ from django.db import transaction
 from django.core.exceptions import PermissionDenied
 from django.http import HttpResponseBadRequest, HttpResponseForbidden
 from django.shortcuts import get_object_or_404, redirect, render
+from django.urls import reverse
 from django.views.decorators.cache import never_cache
 from django.utils import timezone
 from django.views.decorators.http import require_GET, require_http_methods
@@ -88,14 +89,29 @@ def _render_detail(request, slug, section="overview", one_time_secret=""):
         context["dispute_count"] = merchant.disputes.count()
         context["connection_count"] = merchant.provider_connections.filter(status="active").count()
     elif section == "providers":
+        from .nowpayments_connection import self_service_available
         from .stripe_connect import connect_available
         from .square_oauth import oauth_available
 
-        context["connections"] = merchant.provider_connections.order_by("provider", "environment", "created_at")
+        connections = list(
+            merchant.provider_connections.prefetch_related("provider_configs")
+            .order_by("provider", "environment", "created_at")
+        )
+        for connection in connections:
+            if connection.authorization_method != "nowpayments_credentials":
+                continue
+            config = next((item for item in connection.provider_configs.all() if item.adapter_name == "nowpayments"), None)
+            if config:
+                connection.dashboard_config = config
+                connection.dashboard_ipn_url = request.build_absolute_uri(
+                    reverse("payments:nowpayments_ipn", args=[merchant.slug, config.provider])
+                )
+        context["connections"] = connections
         context["stripe_connect_test_available"] = connect_available("test")
         context["stripe_connect_live_available"] = connect_available("live")
         context["square_oauth_test_available"] = oauth_available("test")
         context["square_oauth_live_available"] = oauth_available("live")
+        context["nowpayments_self_service_available"] = self_service_available()
     elif section == "payments":
         context["payments"] = merchant.payment_intents.order_by("-created_at")[:100]
     elif section == "disputes":

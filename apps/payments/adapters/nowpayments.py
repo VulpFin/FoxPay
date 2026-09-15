@@ -3,6 +3,7 @@ import hmac
 import json
 from decimal import Decimal, InvalidOperation
 from urllib.error import HTTPError, URLError
+from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 
 from django.urls import reverse
@@ -15,6 +16,10 @@ API_BASE_URLS = {
     "test": "https://api.sandbox.nowpayments.io/v1",
     "live": "https://api.nowpayments.io/v1",
 }
+
+
+class NowPaymentsAuthorizationError(ProviderAdapterError):
+    pass
 
 
 def provider_secret(config, name):
@@ -55,6 +60,8 @@ def create_invoice_request(api_key, environment, payload):
         with urlopen(request, timeout=20) as response:
             data = json.load(response)
     except HTTPError as exc:
+        if exc.code in {401, 403}:
+            raise NowPaymentsAuthorizationError("NOWPayments rejected the seller authorization.") from exc
         raise ProviderAdapterError(f"NOWPayments invoice request returned HTTP {exc.code}.") from exc
     except (URLError, TimeoutError) as exc:
         raise ProviderAdapterError("NOWPayments invoice request could not be completed.") from exc
@@ -62,6 +69,9 @@ def create_invoice_request(api_key, environment, payload):
         raise ProviderAdapterError("NOWPayments returned an invalid invoice response.") from exc
     if not isinstance(data, dict) or not data.get("id") or not data.get("invoice_url"):
         raise ProviderAdapterError("NOWPayments did not return an invoice ID and URL.")
+    parsed_url = urlsplit(str(data["invoice_url"]))
+    if parsed_url.scheme != "https" or parsed_url.hostname not in {"nowpayments.io", "sandbox.nowpayments.io"}:
+        raise ProviderAdapterError("NOWPayments returned an invalid invoice URL.")
     return data
 
 
@@ -73,6 +83,14 @@ class NowPaymentsAdapter(PaymentProviderAdapter):
         config = self.provider_config
         if not config:
             raise ProviderAdapterError("NOWPayments requires a provider configuration.")
+        config.refresh_from_db(fields=["is_active", "connection"])
+        if not config.is_active:
+            raise ProviderAdapterError("NOWPayments provider routing is disabled.")
+        connection = config.connection
+        if connection and connection.authorization_method == "nowpayments_credentials":
+            connection.refresh_from_db(fields=["status", "revoked_at", "authorization_method"])
+            if connection.status != connection.STATUS_ACTIVE or connection.revoked_at:
+                raise ProviderAdapterError("NOWPayments seller authorization is not active.")
         if intent.currency != "USD":
             raise ProviderAdapterError("NOWPayments currently supports USD-priced Fox Pay invoices only.")
         api_key = provider_secret(config, "api_key")
@@ -108,7 +126,11 @@ class NowPaymentsAdapter(PaymentProviderAdapter):
             invoice_payload["pay_currency"] = str(pay_currency).lower()
         try:
             invoice = create_invoice_request(api_key, config.environment, invoice_payload)
-        except ProviderAdapterError:
+        except ProviderAdapterError as exc:
+            if connection and isinstance(exc, NowPaymentsAuthorizationError):
+                from apps.payments.nowpayments_connection import mark_connection_unhealthy
+
+                mark_connection_unhealthy(connection, config, "api_key_rejected")
             attempt.status = PaymentAttempt.STATUS_FAILED
             attempt.provider_status = "create_failed"
             attempt.save(update_fields=["status", "provider_status", "updated_at"])
@@ -173,5 +195,10 @@ def normalize_ipn(attempt, payload):
         "status": status,
         "provider_reference": attempt.provider_reference,
         "transaction_id": str(payload.get("payment_id", "")),
-        "raw": payload,
+        "provider_status": provider_status[:80],
+        "price_amount": str(payload.get("price_amount", ""))[:80],
+        "price_currency": str(payload.get("price_currency", ""))[:16],
+        "pay_amount": str(payload.get("pay_amount", ""))[:80],
+        "actually_paid": str(payload.get("actually_paid", ""))[:80],
+        "pay_currency": str(payload.get("pay_currency", ""))[:32],
     }

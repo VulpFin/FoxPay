@@ -1,5 +1,85 @@
 <div class="section-heading"><h2>Provider connections</h2></div>
-{% if can_connections %}<div class="seller-row-actions seller-provider-actions">{% if stripe_connect_test_available %}<form method="post" action="{% url 'seller_stripe_connect' merchant.slug 'test' %}">{% csrf_token %}<button type="submit">Connect Stripe test</button></form>{% endif %}{% if stripe_connect_live_available %}<form method="post" action="{% url 'seller_stripe_connect' merchant.slug 'live' %}">{% csrf_token %}<button type="submit">Connect Stripe live</button></form>{% endif %}{% if square_oauth_test_available %}<form method="post" action="{% url 'seller_square_connect' merchant.slug 'test' %}">{% csrf_token %}<button type="submit">Connect Square test</button></form>{% endif %}{% if square_oauth_live_available %}<form method="post" action="{% url 'seller_square_connect' merchant.slug 'live' %}">{% csrf_token %}<button type="submit">Connect Square live</button></form>{% endif %}</div>{% endif %}
-{% if connections %}<div class="table-scroll"><table class="account-table"><thead><tr><th>Provider</th><th>Mode</th><th>Status</th><th>Account</th><th>Last verified</th><th>Actions</th></tr></thead><tbody>
-  {% for connection in connections %}<tr><td><strong>{{ connection.get_provider_display }}</strong></td><td>{{ connection.environment }}</td><td><span class="state-pill">{{ connection.get_status_display }}</span></td><td class="mono">{{ connection.external_account_id|default:'--' }}</td><td>{{ connection.last_verified_at|date:'M j, Y H:i'|default:'--' }}</td><td>{% if can_connections and connection.status != 'revoked' %}{% if connection.authorization_method == 'stripe_connect' %}<form method="post" action="{% url 'seller_stripe_disconnect' merchant.slug connection.uuid %}">{% csrf_token %}<button type="submit" class="secondary">Disconnect</button></form>{% elif connection.authorization_method == 'square_oauth' %}<div class="seller-row-actions">{% if connection.metadata.locations %}<form method="post" action="{% url 'seller_square_location' merchant.slug connection.uuid %}">{% csrf_token %}<select name="location_id" aria-label="Square location" required>{% for location in connection.metadata.locations %}<option value="{{ location.id }}">{{ location.name }} ({{ location.currency }})</option>{% endfor %}</select><button type="submit" class="secondary">Use location</button></form>{% endif %}<form method="post" action="{% url 'seller_square_disconnect' merchant.slug connection.uuid %}">{% csrf_token %}<button type="submit" class="secondary">Disconnect</button></form></div>{% endif %}{% endif %}</td></tr>{% endfor %}
-</tbody></table></div>{% else %}<p class="empty-state">No provider connections.</p>{% endif %}
+
+{% if can_connections %}
+  <div class="seller-row-actions seller-provider-actions">
+    {% if stripe_connect_test_available %}<form method="post" action="{% url 'seller_stripe_connect' merchant.slug 'test' %}">{% csrf_token %}<button type="submit">Connect Stripe test</button></form>{% endif %}
+    {% if stripe_connect_live_available %}<form method="post" action="{% url 'seller_stripe_connect' merchant.slug 'live' %}">{% csrf_token %}<button type="submit">Connect Stripe live</button></form>{% endif %}
+    {% if square_oauth_test_available %}<form method="post" action="{% url 'seller_square_connect' merchant.slug 'test' %}">{% csrf_token %}<button type="submit">Connect Square test</button></form>{% endif %}
+    {% if square_oauth_live_available %}<form method="post" action="{% url 'seller_square_connect' merchant.slug 'live' %}">{% csrf_token %}<button type="submit">Connect Square live</button></form>{% endif %}
+  </div>
+  {% if nowpayments_self_service_available %}
+    <details class="provider-credential-panel">
+      <summary>Connect NOWPayments</summary>
+      <form method="post" action="{% url 'seller_nowpayments_connect' merchant.slug %}" class="seller-provider-form">
+        {% csrf_token %}
+        <label for="nowpayments-name">Name</label>
+        <input id="nowpayments-name" name="display_name" value="NOWPayments" maxlength="120" required>
+        <label for="nowpayments-mode">Mode</label>
+        <select id="nowpayments-mode" name="environment"><option value="test">Test</option><option value="live">Live</option></select>
+        <label for="nowpayments-asset">Asset</label>
+        <input id="nowpayments-asset" name="pay_currency" maxlength="20" placeholder="btc" autocomplete="off">
+        <label for="nowpayments-key">API key</label>
+        <input id="nowpayments-key" name="api_key" type="password" minlength="8" maxlength="2048" autocomplete="new-password" required>
+        <label for="nowpayments-ipn">IPN secret</label>
+        <input id="nowpayments-ipn" name="ipn_secret" type="password" minlength="8" maxlength="2048" autocomplete="new-password" required>
+        <button type="submit">Connect</button>
+      </form>
+    </details>
+  {% endif %}
+{% endif %}
+
+{% if connections %}
+  <div class="table-scroll">
+    <table class="account-table seller-provider-table">
+      <thead><tr><th>Provider</th><th>Mode</th><th>Status</th><th>Account</th><th>Last verified</th><th>Actions</th></tr></thead>
+      <tbody>
+        {% for connection in connections %}
+          <tr>
+            <td><strong>{{ connection.get_provider_display }}</strong>{% if connection.dashboard_config %}<small>{{ connection.dashboard_config.display_name }}</small>{% endif %}</td>
+            <td>{{ connection.environment }}</td>
+            <td><span class="state-pill">{{ connection.get_status_display }}</span>{% if connection.last_error_code %}<small class="mono">{{ connection.last_error_code }}</small>{% endif %}</td>
+            <td class="mono">{{ connection.metadata.display_hint|default:connection.external_account_id|default:'--' }}</td>
+            <td>{{ connection.last_verified_at|date:'M j, Y H:i'|default:'--' }}</td>
+            <td>
+              {% if can_connections and connection.status != 'revoked' %}
+                {% if connection.authorization_method == 'stripe_connect' %}
+                  <form method="post" action="{% url 'seller_stripe_disconnect' merchant.slug connection.uuid %}">{% csrf_token %}<button type="submit" class="secondary">Disconnect</button></form>
+                {% elif connection.authorization_method == 'square_oauth' %}
+                  <div class="seller-row-actions">
+                    {% if connection.metadata.locations %}
+                      <form method="post" action="{% url 'seller_square_location' merchant.slug connection.uuid %}">{% csrf_token %}<select name="location_id" aria-label="Square location" required>{% for location in connection.metadata.locations %}<option value="{{ location.id }}">{{ location.name }} ({{ location.currency }})</option>{% endfor %}</select><button type="submit" class="secondary">Use location</button></form>
+                    {% endif %}
+                    <form method="post" action="{% url 'seller_square_disconnect' merchant.slug connection.uuid %}">{% csrf_token %}<button type="submit" class="secondary">Disconnect</button></form>
+                  </div>
+                {% elif connection.authorization_method == 'nowpayments_credentials' %}
+                  <div class="seller-row-actions">
+                    <form method="post" action="{% url 'seller_nowpayments_test' merchant.slug connection.uuid %}">{% csrf_token %}<button type="submit" class="secondary">Test</button></form>
+                    <details class="provider-replace-panel">
+                      <summary>Replace</summary>
+                      <form method="post" action="{% url 'seller_nowpayments_replace' merchant.slug connection.uuid %}" class="seller-provider-form compact">
+                        {% csrf_token %}
+                        <label for="nowpayments-name-{{ connection.uuid }}">Name</label>
+                        <input id="nowpayments-name-{{ connection.uuid }}" name="display_name" value="{{ connection.dashboard_config.display_name|default:'NOWPayments' }}" maxlength="120" required>
+                        <label for="nowpayments-asset-{{ connection.uuid }}">Asset</label>
+                        <input id="nowpayments-asset-{{ connection.uuid }}" name="pay_currency" value="{{ connection.dashboard_config.settings.pay_currency|default:'' }}" maxlength="20" autocomplete="off">
+                        <label for="nowpayments-key-{{ connection.uuid }}">API key</label>
+                        <input id="nowpayments-key-{{ connection.uuid }}" name="api_key" type="password" minlength="8" maxlength="2048" autocomplete="new-password" required>
+                        <label for="nowpayments-ipn-{{ connection.uuid }}">IPN secret</label>
+                        <input id="nowpayments-ipn-{{ connection.uuid }}" name="ipn_secret" type="password" minlength="8" maxlength="2048" autocomplete="new-password" required>
+                        <button type="submit">Replace</button>
+                      </form>
+                    </details>
+                    <form method="post" action="{% url 'seller_nowpayments_disconnect' merchant.slug connection.uuid %}">{% csrf_token %}<button type="submit" class="secondary">Disconnect</button></form>
+                  </div>
+                {% endif %}
+              {% endif %}
+            </td>
+          </tr>
+          {% if connection.dashboard_ipn_url %}<tr class="provider-webhook-row"><td colspan="6"><span>IPN URL</span><code>{{ connection.dashboard_ipn_url }}</code></td></tr>{% endif %}
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+{% else %}
+  <p class="empty-state">No provider connections.</p>
+{% endif %}

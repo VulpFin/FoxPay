@@ -6,6 +6,7 @@ from apps.accounts import views as account_views
 from apps.payments import merchant_views
 from apps.payments import stripe_connect_views
 from apps.payments import square_oauth_views
+from apps.payments import nowpayments_views
 
 
 urlpatterns = [
@@ -33,6 +34,10 @@ urlpatterns = [
     path("seller/<slug:slug>/square/<uuid:connection_uuid>/location/", square_oauth_views.select_square_location, name="seller_square_location"),
     path("seller/<slug:slug>/square/<uuid:connection_uuid>/disconnect/", square_oauth_views.disconnect_square_oauth, name="seller_square_disconnect"),
     path("api/v1/webhooks/square/oauth/<str:environment>/", square_oauth_views.square_oauth_webhook, name="square_oauth_webhook"),
+    path("seller/<slug:slug>/nowpayments/connect/", nowpayments_views.connect_nowpayments, name="seller_nowpayments_connect"),
+    path("seller/<slug:slug>/nowpayments/<uuid:connection_uuid>/replace/", nowpayments_views.replace_nowpayments_credentials, name="seller_nowpayments_replace"),
+    path("seller/<slug:slug>/nowpayments/<uuid:connection_uuid>/test/", nowpayments_views.test_nowpayments_connection, name="seller_nowpayments_test"),
+    path("seller/<slug:slug>/nowpayments/<uuid:connection_uuid>/disconnect/", nowpayments_views.disconnect_nowpayments, name="seller_nowpayments_disconnect"),
     path("seller/<slug:slug>/keys/create/", merchant_views.create_key, name="seller_create_key"),
     path("seller/<slug:slug>/keys/<uuid:key_uuid>/revoke/", merchant_views.revoke_key, name="seller_revoke_key"),
     path("seller/<slug:slug>/keys/<uuid:key_uuid>/rotate/", merchant_views.rotate_key, name="seller_rotate_key"),

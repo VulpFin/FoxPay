@@ -642,5 +642,21 @@ th {
 .seller-row-actions select { min-height: 34px; max-width: 150px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--ink); }
 .seller-subheading { margin-top: 36px; }
 .seller-provider-actions { margin: 20px 0; }
+.provider-credential-panel { max-width: 760px; margin: 16px 0 24px; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); padding: 12px 0; }
+.provider-credential-panel summary, .provider-replace-panel summary { cursor: pointer; font-weight: 700; }
+.seller-provider-form { display: grid; grid-template-columns: minmax(110px, 0.45fr) minmax(180px, 1fr); gap: 9px 14px; align-items: center; margin-top: 14px; }
+.seller-provider-form label { font-size: 13px; font-weight: 700; }
+.seller-provider-form input, .seller-provider-form select { width: 100%; min-height: 40px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--ink); font: inherit; }
+.seller-provider-form button { grid-column: 2; justify-self: start; }
+.provider-replace-panel { position: relative; }
+.provider-replace-panel[open] { flex-basis: 100%; min-width: min(440px, 76vw); padding: 8px 0; }
+.provider-webhook-row td { padding-top: 8px; border-top: 0; }
+.provider-webhook-row span { display: block; margin-bottom: 4px; color: var(--muted); font-size: 12px; font-weight: 700; }
+.provider-webhook-row code { overflow-wrap: anywhere; }
+.seller-provider-table td small { margin-top: 4px; }
+@media (max-width: 620px) {
+  .seller-provider-form { grid-template-columns: 1fr; }
+  .seller-provider-form button { grid-column: 1; }
+}
 .one-time-secret { display: grid; gap: 8px; }
 .one-time-secret code { display: block; overflow-wrap: anywhere; user-select: all; }

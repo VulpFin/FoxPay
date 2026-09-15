@@ -286,6 +286,11 @@ def nowpayments_ipn(request, merchant_slug, provider):
     secret = provider_secret(config, "ipn_secret")
     if not secret:
         return error_response("NOWPayments IPN secret is not configured.", 503, request_id=getattr(request, "request_id", ""), code="provider_not_configured")
+    if not config.is_active or (
+        config.connection
+        and (config.connection.status != config.connection.STATUS_ACTIVE or config.connection.revoked_at)
+    ):
+        return error_response("NOWPayments provider is not active.", 503, request_id=getattr(request, "request_id", ""), code="provider_not_active")
     try:
         payload = parse_json(request)
     except APIError as exc:
@@ -298,7 +303,7 @@ def nowpayments_ipn(request, merchant_slug, provider):
     if not payload.get("payment_id") or not validate_ipn_amount(attempt, payload):
         return error_response("NOWPayments payment details do not match the invoice.", 422, request_id=getattr(request, "request_id", ""), code="invoice_mismatch")
     try:
-        delivery = record_webhook(provider, normalize_ipn(attempt, payload))
+        delivery = record_webhook(f"nowpayments:{config.pk}", normalize_ipn(attempt, payload))
     except APIError as exc:
         return error_response(exc.message, exc.status, request_id=getattr(request, "request_id", ""), code=exc.code)
     attempt.refresh_from_db()
