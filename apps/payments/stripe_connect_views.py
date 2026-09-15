@@ -3,13 +3,13 @@ from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.db import IntegrityError, transaction
 from django.http import HttpResponseBadRequest, HttpResponseForbidden, JsonResponse
-from django.shortcuts import get_object_or_404, redirect, render
+from django.shortcuts import get_object_or_404, redirect
 from django.urls import reverse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST
 
-from apps.accounts.identity import fresh_tg11_mfa
+from apps.accounts.identity import fresh_tg11_mfa, tg11_mfa_step_up
 
 from .adapters.stripe_checkout import object_to_dict, stripe_module
 from .merchant_views import _merchant_with_capability, _seller_audit
@@ -30,7 +30,7 @@ def begin_stripe_connect(request, slug, environment):
     if environment not in {"test", "live"} or not connect_available(environment):
         return HttpResponseBadRequest("Stripe Connect is unavailable for this environment.")
     if not fresh_tg11_mfa(request):
-        return render(request, "accounts/step_up.html", {"action_name": "Connecting a payment provider", "next_path": f"/seller/{slug}/providers/"}, status=403)
+        return tg11_mfa_step_up(f"/seller/{slug}/providers/")
     callback = request.build_absolute_uri(reverse("seller_stripe_callback", args=[environment]))
     session, state = begin_onboarding(
         merchant=merchant, user=request.user, provider="stripe", environment=environment,
@@ -122,7 +122,7 @@ def stripe_connect_callback(request, environment):
 def disconnect_stripe_connect(request, slug, connection_uuid):
     merchant = _merchant_for_connection(request, slug)
     if not fresh_tg11_mfa(request):
-        return render(request, "accounts/step_up.html", {"action_name": "Disconnecting a payment provider", "next_path": f"/seller/{slug}/providers/"}, status=403)
+        return tg11_mfa_step_up(f"/seller/{slug}/providers/")
     with transaction.atomic():
         connection = get_object_or_404(
             MerchantProviderConnection.objects.select_for_update(), uuid=connection_uuid, merchant=merchant,

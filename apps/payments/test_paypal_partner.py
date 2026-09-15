@@ -178,7 +178,7 @@ class PayPalPartnerTests(TestCase):
 
     def test_begin_and_callback_verify_status_and_reject_replay(self):
         start = reverse("seller_paypal_connect", args=[self.merchant.slug, "test"])
-        self.assertEqual(self.client.post(start).status_code, 403)
+        self.assertEqual(self.client.post(start).status_code, 302)
         self.recent_mfa()
         with patch(
             "apps.payments.paypal_partner_views.create_partner_referral",
@@ -345,7 +345,7 @@ class PayPalPartnerTests(TestCase):
             self.assertEqual(self.post_partner_event(event).json(), {"received": True, "processed": True})
         refresh.assert_called_once()
         disconnect = reverse("seller_paypal_disconnect", args=[self.merchant.slug, connection.uuid])
-        self.assertEqual(self.client.post(disconnect).status_code, 403)
+        self.assertEqual(self.client.post(disconnect).status_code, 302)
         self.recent_mfa()
         self.assertEqual(self.client.post(disconnect).status_code, 302)
         connection.refresh_from_db()

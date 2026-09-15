@@ -70,7 +70,7 @@ class SellerDashboardTests(TestCase):
 
     def test_key_creation_requires_recent_mfa_and_reveals_once(self):
         url = reverse("seller_create_key", args=["seller"])
-        self.assertEqual(self.client.post(url, {"name": "Server", "environment": "test"}).status_code, 403)
+        self.assertEqual(self.client.post(url, {"name": "Server", "environment": "test"}).status_code, 302)
         self.assertFalse(APIKey.objects.exists())
         self.recent_mfa()
         response = self.client.post(url, {"name": "Server", "environment": "test"})
@@ -102,7 +102,7 @@ class SellerDashboardTests(TestCase):
     def test_member_changes_require_mfa_and_preserve_owner_boundary(self):
         subject = uuid.uuid4()
         add = reverse("seller_add_member", args=["seller"])
-        self.assertEqual(self.client.post(add, {"tg11_user_uuid": str(subject), "role": "viewer"}).status_code, 403)
+        self.assertEqual(self.client.post(add, {"tg11_user_uuid": str(subject), "role": "viewer"}).status_code, 302)
         self.recent_mfa()
         self.assertEqual(self.client.post(add, {"tg11_user_uuid": str(subject), "role": "viewer"}).status_code, 302)
         member = MerchantMembership.objects.get(merchant=self.merchant, tg11_user_uuid=subject)

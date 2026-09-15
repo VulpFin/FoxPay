@@ -80,7 +80,7 @@ class NowPaymentsConnectionTests(TestCase):
 
     def test_connect_requires_mfa_encrypts_once_and_never_renders_credentials(self):
         url = reverse("seller_nowpayments_connect", args=[self.merchant.slug])
-        self.assertEqual(self.client.post(url, self.credentials()).status_code, 403)
+        self.assertEqual(self.client.post(url, self.credentials()).status_code, 302)
         self.assertFalse(MerchantProviderConnection.objects.exists())
         self.recent_mfa()
         response = self.connect(follow=True)

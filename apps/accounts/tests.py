@@ -2,6 +2,7 @@ import uuid
 import time
 from unittest.mock import patch
 
+from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.test import TestCase, override_settings
 from tg11_auth.client import Claims
@@ -73,6 +74,10 @@ class AccountDashboardTests(TestCase):
 
 
 class IdentityTests(TestCase):
+    def test_tg11_login_requests_recent_mfa(self):
+        self.assertTrue(settings.TG11_AUTH_REQUIRE_MFA)
+        self.assertEqual(settings.TG11_AUTH_MAX_AGE, 300)
+
     def test_staff_requires_second_factor(self):
         user = get_user_model()(username="admin", is_staff=True)
         with self.assertRaises(AuthError):
@@ -119,14 +124,31 @@ class SavedMethodViewTests(TestCase):
     def test_add_card_requires_recent_mfa(self):
         path = "/payment-methods/add/vulpfin/stripe-primary/"
         response = self.client.post(path)
-        self.assertEqual(response.status_code, 403)
-        self.assertContains(response, "https://accounts.tg11.org/account/security", status_code=403)
+        self.assertRedirects(
+            response,
+            "/auth/tg11/login/?force=1&prompt=login&next=%2Fpayment-methods%2F",
+            fetch_redirect_response=False,
+        )
         self.authenticate_recently()
         with patch("apps.accounts.views.create_setup_checkout", return_value="https://checkout.stripe.com/c/pay/test"):
             response = self.client.post(path)
         self.assertEqual(response.status_code, 302)
         self.assertEqual(response["Location"], "https://checkout.stripe.com/c/pay/test")
         self.assertEqual(Customer.objects.get().tg11_user_uuid, self.subject)
+
+    def test_stale_mfa_redirects_to_fresh_tg11_login(self):
+        session = self.client.session
+        session["foxpay_tg11_auth_time"] = int(time.time()) - 301
+        session["foxpay_tg11_mfa"] = True
+        session.save()
+
+        response = self.client.post("/payment-methods/add/vulpfin/stripe-primary/")
+
+        self.assertRedirects(
+            response,
+            "/auth/tg11/login/?force=1&prompt=login&next=%2Fpayment-methods%2F",
+            fetch_redirect_response=False,
+        )
 
     def test_cannot_remove_another_users_method(self):
         self.authenticate_recently()

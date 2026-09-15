@@ -1,6 +1,9 @@
 import uuid
 import time
+from urllib.parse import urlencode
 
+from django.http import HttpResponseRedirect
+from django.urls import reverse
 from tg11_auth.models import TG11IdentityLink
 from tg11_auth.services import AuthError
 
@@ -37,3 +40,8 @@ def linked_subject(user):
 def fresh_tg11_mfa(request, seconds=300):
     auth_time = request.session.get("foxpay_tg11_auth_time", 0)
     return bool(request.session.get("foxpay_tg11_mfa") and auth_time and 0 <= time.time() - auth_time <= seconds)
+
+
+def tg11_mfa_step_up(next_path="/"):
+    query = urlencode({"force": "1", "prompt": "login", "next": next_path})
+    return HttpResponseRedirect(f"{reverse('tg11_auth:login')}?{query}")

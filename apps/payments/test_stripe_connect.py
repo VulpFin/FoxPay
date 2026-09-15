@@ -101,7 +101,7 @@ class StripeConnectTests(TestCase):
 
     def test_begin_and_callback_store_only_account_id_and_reject_replay(self):
         start = reverse("seller_stripe_connect", args=["seller", "test"])
-        self.assertEqual(self.client.post(start).status_code, 403)
+        self.assertEqual(self.client.post(start).status_code, 302)
         self.recent_mfa()
         with patch("apps.payments.stripe_connect_views.authorize_url", return_value="https://connect.stripe.com/oauth/authorize") as authorize:
             response = self.client.post(start)
@@ -237,7 +237,7 @@ class StripeConnectTests(TestCase):
     def test_disconnect_requires_mfa_and_revokes_connection(self, disconnect):
         connection, config = self.connection()
         url = reverse("seller_stripe_disconnect", args=["seller", connection.uuid])
-        self.assertEqual(self.client.post(url).status_code, 403)
+        self.assertEqual(self.client.post(url).status_code, 302)
         disconnect.assert_not_called()
         self.recent_mfa()
         self.assertEqual(self.client.post(url).status_code, 302)

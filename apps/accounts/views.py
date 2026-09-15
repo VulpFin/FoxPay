@@ -20,7 +20,7 @@ from apps.payments.models import (
 from apps.payments.adapters.stripe_methods import create_setup_checkout, detach_saved_method
 from apps.payments.permissions import routing_block_reason
 
-from .identity import fresh_tg11_mfa, linked_subject
+from .identity import fresh_tg11_mfa, linked_subject, tg11_mfa_step_up
 
 
 @never_cache
@@ -115,7 +115,7 @@ def add_payment_method(request, merchant_slug, provider):
     if not subject:
         return HttpResponseForbidden("Connect a TG11 account first.")
     if not fresh_tg11_mfa(request):
-        return render(request, "accounts/step_up.html", status=403)
+        return tg11_mfa_step_up("/payment-methods/")
     config = get_object_or_404(
         ProviderConfig,
         merchant__slug=merchant_slug,
@@ -158,7 +158,7 @@ def remove_payment_method(request, method_uuid):
     if not subject:
         return HttpResponseForbidden("Connect a TG11 account first.")
     if not fresh_tg11_mfa(request):
-        return render(request, "accounts/step_up.html", status=403)
+        return tg11_mfa_step_up("/payment-methods/")
     method = get_object_or_404(
         PaymentMethodReference.objects.select_related("customer", "merchant", "provider_config"),
         uuid=method_uuid,

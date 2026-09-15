@@ -14,7 +14,7 @@ from django.views.decorators.cache import never_cache
 from django.utils import timezone
 from django.views.decorators.http import require_GET, require_http_methods
 
-from apps.accounts.identity import fresh_tg11_mfa, linked_subject
+from apps.accounts.identity import fresh_tg11_mfa, linked_subject, tg11_mfa_step_up
 from tg11_auth.models import TG11IdentityLink
 
 from .agreements import agreement_snapshot
@@ -165,7 +165,7 @@ def _merchant_with_capability(request, slug, capability):
 
 
 def _mfa_step_up(request, slug):
-    return render(request, "accounts/step_up.html", {"action_name": "Managing seller security settings", "next_path": f"/seller/{slug}/"}, status=403)
+    return tg11_mfa_step_up(f"/seller/{slug}/")
 
 
 def _seller_audit(request, merchant, action, object_type, object_id, metadata=None):

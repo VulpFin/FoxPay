@@ -151,7 +151,7 @@ class SquareOAuthTests(TestCase):
 
     def test_begin_and_callback_encrypt_tokens_activate_one_location_and_reject_replay(self):
         start = reverse("seller_square_connect", args=[self.merchant.slug, "test"])
-        self.assertEqual(self.client.post(start).status_code, 403)
+        self.assertEqual(self.client.post(start).status_code, 302)
         self.recent_mfa()
         with patch("apps.payments.square_oauth_views.authorize_url", return_value="https://connect.squareupsandbox.com/oauth2/authorize") as authorize:
             response = self.client.post(start)
@@ -384,7 +384,7 @@ class SquareOAuthTests(TestCase):
         connection = self.connection(status=MerchantProviderConnection.STATUS_ACTIVE, merchant_id="SQ_MERCHANT_2")
         config = self.config(connection)
         disconnect = reverse("seller_square_disconnect", args=[self.merchant.slug, connection.uuid])
-        self.assertEqual(self.client.post(disconnect).status_code, 403)
+        self.assertEqual(self.client.post(disconnect).status_code, 302)
         self.recent_mfa()
         with patch("apps.payments.square_oauth_views.revoke_authorization") as revoke:
             self.assertEqual(self.client.post(disconnect).status_code, 302)
