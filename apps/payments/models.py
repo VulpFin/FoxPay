@@ -217,6 +217,7 @@ class ProviderOnboardingSession(models.Model):
     state_hash = models.CharField(max_length=64, unique=True)
     requested_scopes = models.JSONField(default=list, blank=True)
     encrypted_pkce_verifier = models.TextField(blank=True)
+    metadata = models.JSONField(default=dict, blank=True)
     expires_at = models.DateTimeField()
     consumed_at = models.DateTimeField(blank=True, null=True)
     return_path = models.CharField(max_length=500, default="/seller/")

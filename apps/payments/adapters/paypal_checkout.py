@@ -9,8 +9,9 @@ that a customer approves still has to be captured, so the webhook receiver
 captures on CHECKOUT.ORDER.APPROVED and only settles the attempt once a capture
 has actually completed.
 
-Credentials come from `ProviderCredential` rows (`client_id`, `client_secret`,
-`webhook_id`) and fall back to the PAYPAL_* settings.
+Seller partner connections use FoxPay's platform credentials and a seller-ID
+auth assertion. Legacy operator-created routes can still read encrypted
+`ProviderCredential` rows during migration.
 """
 import json
 import time
@@ -88,6 +89,23 @@ class PayPalCheckoutAdapter(PaymentProviderAdapter):
     ]
 
     # -- configuration ---------------------------------------------------
+    def partner_connection(self, *, require_active=True):
+        config = self.provider_config
+        if not config or not config.connection_id:
+            return None
+        config.refresh_from_db(fields=["is_active", "connection"])
+        connection = config.connection
+        if connection.authorization_method != "paypal_partner":
+            return None
+        connection.refresh_from_db(fields=["status", "revoked_at", "external_account_id", "authorization_method"])
+        if require_active and (
+            not config.is_active
+            or connection.status != connection.STATUS_ACTIVE
+            or connection.revoked_at
+        ):
+            raise ProviderAdapterError("PayPal seller authorization is not active.")
+        return connection
+
     def credential(self, name, fallback_setting=""):
         if self.provider_config:
             credential = (
@@ -100,18 +118,33 @@ class PayPalCheckoutAdapter(PaymentProviderAdapter):
         return getattr(settings, fallback_setting, "") if fallback_setting else ""
 
     def client_id(self):
+        connection = self.partner_connection()
+        if connection:
+            from apps.payments.paypal_partner import partner_credentials
+
+            return partner_credentials(connection.environment)[0]
         value = self.credential("client_id", "PAYPAL_CLIENT_ID")
         if not value:
             raise ImproperlyConfigured("PayPal requires a client_id provider credential or PAYPAL_CLIENT_ID.")
         return value
 
     def client_secret(self):
+        connection = self.partner_connection()
+        if connection:
+            from apps.payments.paypal_partner import partner_credentials
+
+            return partner_credentials(connection.environment)[1]
         value = self.credential("client_secret", "PAYPAL_CLIENT_SECRET")
         if not value:
             raise ImproperlyConfigured("PayPal requires a client_secret provider credential or PAYPAL_CLIENT_SECRET.")
         return value
 
     def webhook_id(self):
+        connection = self.partner_connection(require_active=False)
+        if connection:
+            from apps.payments.paypal_partner import partner_webhook_id
+
+            return partner_webhook_id(connection.environment)
         return self.credential("webhook_id", "PAYPAL_WEBHOOK_ID")
 
     def base_url(self):
@@ -137,13 +170,23 @@ class PayPalCheckoutAdapter(PaymentProviderAdapter):
         except Exception as exc:
             raise ProviderAdapterError(f"PayPal is unreachable ({exc.__class__.__name__}).")
 
-    def call(self, method, path, body=None, token=""):
+    def call(self, method, path, body=None, token="", request_id=""):
         payload = None if body is None else json.dumps(body).encode()
+        headers = {"Authorization": f"Bearer {token or self._token()}", "Content-Type": "application/json"}
+        connection = self.partner_connection()
+        if connection:
+            from apps.payments.paypal_partner import auth_assertion, partner_credentials
+
+            client_id, _, _, attribution_id = partner_credentials(connection.environment)
+            headers["PayPal-Auth-Assertion"] = auth_assertion(client_id, connection.external_account_id)
+            headers["PayPal-Partner-Attribution-Id"] = attribution_id
+        if request_id:
+            headers["PayPal-Request-Id"] = request_id[:108]
         request = urllib.request.Request(
             f"{self.base_url()}{path}",
             data=payload,
             method=method,
-            headers={"Authorization": f"Bearer {token or self._token()}", "Content-Type": "application/json"},
+            headers=headers,
         )
         try:
             with urllib.request.urlopen(request, timeout=TIMEOUT) as response:
@@ -160,6 +203,7 @@ class PayPalCheckoutAdapter(PaymentProviderAdapter):
 
     # -- creating the attempt --------------------------------------------
     def create_checkout_session(self, request, intent, payload):
+        connection = self.partner_connection()
         attempt = PaymentAttempt.objects.create(
             intent=intent,
             provider_config=self.provider_config,
@@ -193,7 +237,14 @@ class PayPalCheckoutAdapter(PaymentProviderAdapter):
                 "cancel_url": cancel_url,
             },
         }
-        status, data = self.call("POST", "/v2/checkout/orders", body)
+        if connection:
+            body["purchase_units"][0]["payee"] = {"merchant_id": connection.external_account_id}
+        status, data = self.call(
+            "POST",
+            "/v2/checkout/orders",
+            body,
+            request_id=f"foxpay-order-{attempt.uuid}",
+        )
         if status not in (200, 201):
             attempt.status = PaymentAttempt.STATUS_FAILED
             attempt.provider_status = "create_failed"
@@ -207,6 +258,14 @@ class PayPalCheckoutAdapter(PaymentProviderAdapter):
             if link.get("rel") in ("approve", "payer-action"):
                 approval = link.get("href", "")
                 break
+        parsed_approval = urllib.parse.urlsplit(approval) if isinstance(approval, str) else None
+        allowed_hosts = {"www.paypal.com", "paypal.com"} if self.base_url() == LIVE else {"www.sandbox.paypal.com", "sandbox.paypal.com"}
+        if approval and (
+            not parsed_approval
+            or parsed_approval.scheme != "https"
+            or parsed_approval.hostname not in allowed_hosts
+        ):
+            approval = ""
         attempt.status = PaymentAttempt.STATUS_ACTION_REQUIRED
         attempt.provider_reference = data.get("id", "")
         attempt.provider_status = data.get("status", "")
@@ -227,7 +286,12 @@ class PayPalCheckoutAdapter(PaymentProviderAdapter):
     # -- settlement -------------------------------------------------------
     def capture(self, paypal_order_id):
         """Approval is not payment: this is what takes the money."""
-        status, data = self.call("POST", f"/v2/checkout/orders/{paypal_order_id}/capture", {})
+        status, data = self.call(
+            "POST",
+            f"/v2/checkout/orders/{paypal_order_id}/capture",
+            {},
+            request_id=f"foxpay-capture-{paypal_order_id}",
+        )
         if status in (200, 201):
             return data
         if status == 422 and any(d.get("issue") == "ORDER_ALREADY_CAPTURED" for d in (data.get("details") or [])):

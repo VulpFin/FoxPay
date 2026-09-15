@@ -6,6 +6,8 @@
     {% if stripe_connect_live_available %}<form method="post" action="{% url 'seller_stripe_connect' merchant.slug 'live' %}">{% csrf_token %}<button type="submit">Connect Stripe live</button></form>{% endif %}
     {% if square_oauth_test_available %}<form method="post" action="{% url 'seller_square_connect' merchant.slug 'test' %}">{% csrf_token %}<button type="submit">Connect Square test</button></form>{% endif %}
     {% if square_oauth_live_available %}<form method="post" action="{% url 'seller_square_connect' merchant.slug 'live' %}">{% csrf_token %}<button type="submit">Connect Square live</button></form>{% endif %}
+    {% if paypal_partner_test_available %}<form method="post" action="{% url 'seller_paypal_connect' merchant.slug 'test' %}">{% csrf_token %}<button type="submit">Connect PayPal test</button></form>{% endif %}
+    {% if paypal_partner_live_available %}<form method="post" action="{% url 'seller_paypal_connect' merchant.slug 'live' %}">{% csrf_token %}<button type="submit">Connect PayPal live</button></form>{% endif %}
   </div>
   {% if nowpayments_self_service_available %}
     <details class="provider-credential-panel">
@@ -70,6 +72,11 @@
                       </form>
                     </details>
                     <form method="post" action="{% url 'seller_nowpayments_disconnect' merchant.slug connection.uuid %}">{% csrf_token %}<button type="submit" class="secondary">Disconnect</button></form>
+                  </div>
+                {% elif connection.authorization_method == 'paypal_partner' %}
+                  <div class="seller-row-actions">
+                    <form method="post" action="{% url 'seller_paypal_refresh' merchant.slug connection.uuid %}">{% csrf_token %}<button type="submit" class="secondary">Refresh</button></form>
+                    <form method="post" action="{% url 'seller_paypal_disconnect' merchant.slug connection.uuid %}">{% csrf_token %}<button type="submit" class="secondary">Disconnect</button></form>
                   </div>
                 {% endif %}
               {% endif %}

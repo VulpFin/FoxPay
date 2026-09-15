@@ -90,6 +90,7 @@ def _render_detail(request, slug, section="overview", one_time_secret=""):
         context["connection_count"] = merchant.provider_connections.filter(status="active").count()
     elif section == "providers":
         from .nowpayments_connection import self_service_available
+        from .paypal_partner import partner_available
         from .stripe_connect import connect_available
         from .square_oauth import oauth_available
 
@@ -112,6 +113,8 @@ def _render_detail(request, slug, section="overview", one_time_secret=""):
         context["square_oauth_test_available"] = oauth_available("test")
         context["square_oauth_live_available"] = oauth_available("live")
         context["nowpayments_self_service_available"] = self_service_available()
+        context["paypal_partner_test_available"] = partner_available("test")
+        context["paypal_partner_live_available"] = partner_available("live")
     elif section == "payments":
         context["payments"] = merchant.payment_intents.order_by("-created_at")[:100]
     elif section == "disputes":

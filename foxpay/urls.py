@@ -7,6 +7,7 @@ from apps.payments import merchant_views
 from apps.payments import stripe_connect_views
 from apps.payments import square_oauth_views
 from apps.payments import nowpayments_views
+from apps.payments import paypal_partner_views
 
 
 urlpatterns = [
@@ -38,6 +39,11 @@ urlpatterns = [
     path("seller/<slug:slug>/nowpayments/<uuid:connection_uuid>/replace/", nowpayments_views.replace_nowpayments_credentials, name="seller_nowpayments_replace"),
     path("seller/<slug:slug>/nowpayments/<uuid:connection_uuid>/test/", nowpayments_views.test_nowpayments_connection, name="seller_nowpayments_test"),
     path("seller/<slug:slug>/nowpayments/<uuid:connection_uuid>/disconnect/", nowpayments_views.disconnect_nowpayments, name="seller_nowpayments_disconnect"),
+    path("seller/<slug:slug>/paypal/<str:environment>/connect/", paypal_partner_views.begin_paypal_partner, name="seller_paypal_connect"),
+    path("seller/paypal/<str:environment>/callback/", paypal_partner_views.paypal_partner_callback, name="seller_paypal_callback"),
+    path("seller/<slug:slug>/paypal/<uuid:connection_uuid>/refresh/", paypal_partner_views.refresh_paypal_partner, name="seller_paypal_refresh"),
+    path("seller/<slug:slug>/paypal/<uuid:connection_uuid>/disconnect/", paypal_partner_views.disconnect_paypal_partner, name="seller_paypal_disconnect"),
+    path("api/v1/webhooks/paypal/partner/<str:environment>/", paypal_partner_views.paypal_partner_webhook, name="paypal_partner_webhook"),
     path("seller/<slug:slug>/keys/create/", merchant_views.create_key, name="seller_create_key"),
     path("seller/<slug:slug>/keys/<uuid:key_uuid>/revoke/", merchant_views.revoke_key, name="seller_revoke_key"),
     path("seller/<slug:slug>/keys/<uuid:key_uuid>/rotate/", merchant_views.rotate_key, name="seller_rotate_key"),

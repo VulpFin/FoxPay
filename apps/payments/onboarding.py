@@ -45,14 +45,14 @@ def begin_onboarding(*, merchant, user, provider, environment, requested_scopes=
 
 
 @transaction.atomic
-def consume_onboarding(*, raw_state, merchant, user, provider, environment):
+def consume_onboarding(*, raw_state, merchant=None, user, provider, environment):
     if not isinstance(raw_state, str) or not raw_state or len(raw_state) > 256:
         raise OnboardingStateError("Invalid onboarding state.")
     digest = hashlib.sha256(raw_state.encode("utf-8")).hexdigest()
     session = ProviderOnboardingSession.objects.select_for_update().filter(state_hash=digest).first()
     if (
         not session
-        or session.merchant_id != merchant.pk
+        or (merchant is not None and session.merchant_id != merchant.pk)
         or session.user_id != user.pk
         or session.provider != provider
         or session.environment != environment
