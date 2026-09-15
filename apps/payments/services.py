@@ -1,18 +1,21 @@
+import re
 import uuid
 
 from django.conf import settings
-from django.core.cache import cache
 from django.core.exceptions import ImproperlyConfigured
-from django.db import transaction
+from django.db import IntegrityError, transaction
+from django.db.models import Sum
 from django.http import JsonResponse
 from django.urls import reverse
+from django.utils import timezone
 
-from .adapters.base import ProviderAdapterError
+from .abuse import AbuseControlError, AbuseLimitExceeded, enforce_api_limits, enforce_intent_creation, enforce_provider_call, record_payment_outcome
+from .adapters.base import Capability, ProviderAdapterError, ProviderOperationResult, ProviderRequestError
 from .adapters.card import get_card_adapter
 from .adapters.crypto import get_crypto_adapter
 from .events import emit_event
 from .ledger import record_payment_success, record_refund
-from .models import APIKey, Customer, IdempotencyRecord, Merchant, PaymentAttempt, PaymentIntent, ProviderEvent, Refund, WebhookDelivery
+from .models import APIKey, Customer, IdempotencyRecord, Merchant, PaymentAttempt, PaymentIntent, ProviderConfig, ProviderEvent, Refund, WebhookDelivery
 from .permissions import routing_block_reason
 from .routing import authorized_config, provider_routes
 from .safe_urls import UnsafeURL, return_origin
@@ -27,6 +30,54 @@ class APIError(Exception):
         super().__init__(message)
 
 
+RAW_CARD_FIELD_NAMES = {
+    "card",
+    "card_data",
+    "card_number",
+    "cardnumber",
+    "primary_account_number",
+    "pan",
+    "cvv",
+    "cvv2",
+    "cvc",
+    "cvc2",
+    "magnetic_stripe",
+    "magstripe",
+    "track1",
+    "track2",
+    "emv",
+    "cryptogram",
+    "payment_card",
+}
+
+
+def _looks_like_card_number(value):
+    if not isinstance(value, (str, int)) or isinstance(value, bool):
+        return False
+    digits = re.sub(r"[ -]", "", str(value))
+    return digits.isdigit() and 12 <= len(digits) <= 19
+
+
+def reject_raw_card_fields(value, path=()):
+    if isinstance(value, dict):
+        for key, nested in value.items():
+            normalized = str(key).strip().lower().replace("-", "_").replace(" ", "_")
+            card_context = any("card" in item or "payment_method" in item for item in path)
+            if normalized in RAW_CARD_FIELD_NAMES or (
+                normalized == "number" and (card_context or _looks_like_card_number(nested))
+            ):
+                raise APIError(
+                    "Raw card data is not accepted. Use a provider-hosted checkout.",
+                    status=422,
+                    type="invalid_request",
+                    code="raw_card_data_forbidden",
+                )
+            reject_raw_card_fields(nested, (*path, normalized))
+    elif isinstance(value, list):
+        for nested in value:
+            reject_raw_card_fields(nested, path)
+
+
 def error_response(message, status=400, request_id="", type="invalid_request", code="invalid_request"):
     return JsonResponse(
         {"error": {"type": type, "code": code, "message": message, "request_id": request_id}},
@@ -35,12 +86,14 @@ def error_response(message, status=400, request_id="", type="invalid_request", c
 
 
 def enforce_rate_limit(request, merchant=None, bucket="api"):
-    identifier = merchant.id if merchant else request.META.get("REMOTE_ADDR", "unknown")
-    key = f"foxpay:rate:{bucket}:{identifier}"
-    current = cache.get(key, 0) + 1
-    cache.set(key, current, 60)
-    if current > settings.FOXPAY_API_RATE_LIMIT_PER_MINUTE:
-        raise APIError("Rate limit exceeded.", status=429, type="rate_limit_error", code="rate_limit_exceeded")
+    if merchant is None:
+        return
+    try:
+        enforce_api_limits(request, merchant, bucket=bucket)
+    except AbuseLimitExceeded as exc:
+        raise APIError(str(exc), status=429, type="rate_limit_error", code=exc.code) from exc
+    except AbuseControlError as exc:
+        raise APIError(str(exc), status=503, type="api_error", code=exc.code) from exc
 
 
 def authenticate_merchant(raw_key, required_scope=None):
@@ -59,10 +112,10 @@ def authenticate_merchant(raw_key, required_scope=None):
     raise APIError("Invalid Fox Pay API key.", status=401, type="authentication_error", code="invalid_api_key")
 
 
-def enforce_merchant_routing(merchant, *, fresh=False):
+def enforce_merchant_routing(merchant, *, fresh=False, environment=None):
     if fresh:
         merchant = Merchant.objects.select_for_update().get(pk=merchant.pk)
-    reason = routing_block_reason(merchant)
+    reason = routing_block_reason(merchant, environment)
     if reason:
         raise APIError("Merchant payment routing is unavailable.", status=403, type="permission_error", code=reason)
     return merchant
@@ -221,11 +274,17 @@ def create_attempts_for_method(request, merchant, intent, payload, method):
     created = []
     failures = []
     for provider, provider_config in provider_routes(merchant, method):
-        enforce_merchant_routing(merchant, fresh=True)
+        merchant = enforce_merchant_routing(Merchant.objects.get(pk=merchant.pk), environment=intent.environment)
         if provider_config:
-            provider_config = type(provider_config).objects.select_for_update().select_related("connection").get(pk=provider_config.pk)
+            provider_config = type(provider_config).objects.select_related("connection").get(pk=provider_config.pk)
             if not provider_config.is_active or not authorized_config(merchant, provider_config):
                 continue
+        try:
+            enforce_provider_call(merchant, ip_hash=intent.request_ip_hash, environment=intent.environment)
+        except AbuseLimitExceeded as exc:
+            raise APIError(str(exc), status=429, type="rate_limit_error", code=exc.code) from exc
+        except AbuseControlError as exc:
+            raise APIError(str(exc), status=503, type="api_error", code=exc.code) from exc
         try:
             if method == PaymentAttempt.METHOD_CARD:
                 created.append(get_card_adapter(provider, provider_config).create_attempt(request, intent, payload))
@@ -238,9 +297,11 @@ def create_attempts_for_method(request, merchant, intent, payload, method):
     return created
 
 
-@transaction.atomic
 def create_payment_intent(request, merchant, payload, idempotency_key=""):
-    merchant = enforce_merchant_routing(merchant, fresh=True)
+    if not isinstance(payload, dict):
+        raise APIError("Request body must be an object.")
+    reject_raw_card_fields(payload)
+    merchant = enforce_merchant_routing(Merchant.objects.get(pk=merchant.pk))
     if idempotency_key:
         if len(idempotency_key) > 160:
             raise APIError("Idempotency-Key must be 160 characters or fewer.")
@@ -277,35 +338,62 @@ def create_payment_intent(request, merchant, payload, idempotency_key=""):
         )
     metadata = validate_metadata(payload.get("metadata") or {})
     validate_return_urls(merchant, payload.get("success_url", ""), payload.get("cancel_url", ""))
-    customer = get_or_create_customer(merchant, payload)
-    intent = PaymentIntent.objects.create(
-        merchant=merchant,
-        customer=customer,
-        amount=amount,
-        currency=currency,
-        description=payload.get("description", ""),
-        requested_payment_methods=payment_methods,
-        environment=settings.FOXPAY_ENV,
-        capture_strategy=capture_strategy,
-        statement_descriptor=payload.get("statement_descriptor", ""),
-        reference=payload.get("reference", ""),
-        expires_at=payload.get("expires_at") or None,
-        success_url=payload.get("success_url", ""),
-        cancel_url=payload.get("cancel_url", ""),
-        metadata=metadata,
-    )
+    try:
+        ip_hash = enforce_intent_creation(request, merchant, amount)
+    except AbuseLimitExceeded as exc:
+        raise APIError(str(exc), status=429, type="rate_limit_error", code=exc.code) from exc
+    except AbuseControlError as exc:
+        raise APIError(str(exc), status=503, type="api_error", code=exc.code) from exc
 
-    for method in payment_methods:
-        create_attempts_for_method(request, merchant, intent, payload, method)
-
-    if idempotency_key:
-        IdempotencyRecord.objects.create(
+    with transaction.atomic():
+        merchant = enforce_merchant_routing(merchant, fresh=True)
+        if idempotency_key:
+            existing = (
+                IdempotencyRecord.objects.select_related("payment_intent")
+                .filter(merchant=merchant, key=idempotency_key)
+                .first()
+            )
+            if existing:
+                intent = PaymentIntent.objects.prefetch_related("attempts", "attempts__crypto_invoice").get(pk=existing.payment_intent_id)
+                intent.foxpay_checkout_url = request.build_absolute_uri(reverse("payments:foxpay_checkout", args=[intent.client_secret]))
+                return intent
+        customer = get_or_create_customer(merchant, payload)
+        intent = PaymentIntent.objects.create(
             merchant=merchant,
-            key=idempotency_key,
-            payment_intent=intent,
-            response_object_type="payment_intent",
-            response_object_id=intent.public_id,
+            customer=customer,
+            amount=amount,
+            currency=currency,
+            description=payload.get("description", ""),
+            requested_payment_methods=payment_methods,
+            environment=settings.FOXPAY_ENV,
+            capture_strategy=capture_strategy,
+            statement_descriptor=payload.get("statement_descriptor", ""),
+            reference=payload.get("reference", ""),
+            expires_at=payload.get("expires_at") or None,
+            success_url=payload.get("success_url", ""),
+            cancel_url=payload.get("cancel_url", ""),
+            metadata=metadata,
+            request_ip_hash=ip_hash,
         )
+        if idempotency_key:
+            IdempotencyRecord.objects.create(
+                merchant=merchant,
+                key=idempotency_key,
+                payment_intent=intent,
+                response_object_type="payment_intent",
+                response_object_id=intent.public_id,
+            )
+
+    try:
+        for method in payment_methods:
+            create_attempts_for_method(request, merchant, intent, payload, method)
+    except Exception:
+        if not intent.attempts.filter(
+            status__in=[PaymentAttempt.STATUS_PENDING, PaymentAttempt.STATUS_ACTION_REQUIRED, PaymentAttempt.STATUS_SUCCEEDED]
+        ).exists():
+            intent.status = PaymentIntent.STATUS_FAILED
+            intent.save(update_fields=["status", "updated_at"])
+        raise
 
     hydrated = PaymentIntent.objects.prefetch_related("attempts", "attempts__crypto_invoice").get(pk=intent.pk)
     hydrated.foxpay_checkout_url = request.build_absolute_uri(reverse("payments:foxpay_checkout", args=[hydrated.client_secret]))
@@ -313,64 +401,313 @@ def create_payment_intent(request, merchant, payload, idempotency_key=""):
     return hydrated
 
 
-@transaction.atomic
-def create_refund(request, merchant, intent, payload, idempotency_key=""):
-    if idempotency_key:
-        existing = (
-            IdempotencyRecord.objects.select_related("payment_intent")
-            .filter(merchant=merchant, key=f"refund:{idempotency_key}")
-            .first()
-        )
-        if existing:
-            refund = Refund.objects.filter(public_id=existing.response_object_id, merchant=merchant).first()
-            if refund:
-                return refund
-
-    amount = payload.get("amount") or intent.amount
-    if not isinstance(amount, int) or amount <= 0:
-        raise APIError("amount must be a positive integer.")
-    refunded_total = sum(refund.amount for refund in intent.refunds.exclude(status=Refund.STATUS_FAILED))
-    if refunded_total + amount > intent.amount:
-        raise APIError("Refund amount exceeds captured payment amount.", type="payment_error", code="amount_exceeds_refundable")
-
-    attempt = intent.attempts.filter(status=PaymentAttempt.STATUS_SUCCEEDED).order_by("-created_at").first()
-    if not attempt:
-        raise APIError("Payment has not been captured.", status=409, type="payment_error", code="payment_not_captured")
-    adapter = attempt.provider_config.adapter if attempt.provider_config else attempt.provider
-    if adapter != "mock" or intent.environment != "test":
+def _adapter_for_refund(attempt):
+    if attempt.method != PaymentAttempt.METHOD_CARD:
         raise APIError(
-            "Refunds for this provider are not available through Fox Pay yet.",
+            "Crypto refunds require a seller-authorized manual workflow.",
+            status=501,
+            type="unsupported_operation",
+            code="manual_crypto_refund_required",
+        )
+    adapter_name = attempt.provider_config.adapter_name if attempt.provider_config else attempt.provider
+    try:
+        adapter = get_card_adapter(adapter_name, attempt.provider_config)
+    except ImproperlyConfigured as exc:
+        raise APIError(
+            "Refunds for this provider are not available through Fox Pay.",
+            status=501,
+            type="unsupported_operation",
+            code="provider_refund_unavailable",
+        ) from exc
+    if Capability.REFUNDS not in adapter.capabilities:
+        raise APIError(
+            "Refunds for this provider are not available through Fox Pay.",
             status=501,
             type="unsupported_operation",
             code="provider_refund_unavailable",
         )
-    refund = Refund.objects.create(
-        merchant=merchant,
-        payment_intent=intent,
-        payment_attempt=attempt,
-        provider_config=attempt.provider_config if attempt else None,
-        amount=amount,
-        currency=intent.currency,
-        status=Refund.STATUS_SUCCEEDED,
-        provider=attempt.provider if attempt else "",
-        reason=payload.get("reason", ""),
-        metadata=validate_metadata(payload.get("metadata") or {}),
-    )
-    record_refund(refund, getattr(request, "request_id", ""))
-    if idempotency_key:
-        IdempotencyRecord.objects.create(
-            merchant=merchant,
-            key=f"refund:{idempotency_key}",
-            payment_intent=intent,
-            response_object_type="refund",
-            response_object_id=refund.public_id,
-        )
+    return adapter
 
-    refunded_total += amount
-    intent.status = PaymentIntent.STATUS_REFUNDED if refunded_total == intent.amount else PaymentIntent.STATUS_PARTIALLY_REFUNDED
-    intent.save(update_fields=["status", "updated_at"])
-    emit_event(merchant, "refund.succeeded", serialize_refund(refund), idempotency_key=f"refund.succeeded:{refund.public_id}")
+
+def _existing_refund(merchant, idempotency_key):
+    if not idempotency_key:
+        return None
+    refund = Refund.objects.filter(merchant=merchant, idempotency_key=idempotency_key).first()
+    if refund:
+        return refund
+    legacy = IdempotencyRecord.objects.filter(
+        merchant=merchant,
+        key=f"refund:{idempotency_key}",
+        response_object_type="refund",
+    ).first()
+    if legacy:
+        return Refund.objects.filter(merchant=merchant, public_id=legacy.response_object_id).first()
+    return None
+
+
+def _reserve_refund(merchant, intent, payload, idempotency_key):
+    if idempotency_key and len(idempotency_key) > 160:
+        raise APIError("Idempotency-Key must be 160 characters or fewer.")
+    if not isinstance(payload, dict):
+        raise APIError("Request body must be an object.")
+    reason = payload.get("reason", "")
+    if not isinstance(reason, str) or len(reason) > 240:
+        raise APIError("reason must be a string of at most 240 characters.")
+    metadata = validate_metadata(payload.get("metadata") or {})
+
+    with transaction.atomic():
+        merchant = Merchant.objects.select_for_update().get(pk=merchant.pk)
+        enforce_merchant_routing(merchant, environment=intent.environment)
+        intent = PaymentIntent.objects.select_for_update().get(pk=intent.pk, merchant=merchant)
+        existing = _existing_refund(merchant, idempotency_key)
+        if existing:
+            return existing, False
+
+        amount = payload.get("amount", intent.amount)
+        if not isinstance(amount, int) or isinstance(amount, bool) or amount <= 0:
+            raise APIError("amount must be a positive integer.")
+        reserved_refunds = list(
+            Refund.objects.select_for_update()
+            .filter(payment_intent=intent)
+            .exclude(status__in=[Refund.STATUS_FAILED, Refund.STATUS_CANCELED])
+        )
+        reserved_total = sum(item.amount for item in reserved_refunds)
+        if reserved_total + amount > intent.amount:
+            raise APIError(
+                "Refund amount exceeds captured payment amount.",
+                type="payment_error",
+                code="amount_exceeds_refundable",
+            )
+        attempt = (
+            PaymentAttempt.objects.select_for_update()
+            .select_related("provider_config", "provider_config__connection")
+            .filter(intent=intent, status=PaymentAttempt.STATUS_SUCCEEDED)
+            .order_by("-created_at")
+            .first()
+        )
+        if not attempt:
+            raise APIError(
+                "Payment has not been captured.",
+                status=409,
+                type="payment_error",
+                code="payment_not_captured",
+            )
+        if attempt.amount != intent.amount or attempt.currency.upper() != intent.currency.upper():
+            raise APIError(
+                "Captured payment details do not match the payment intent.",
+                status=409,
+                type="payment_error",
+                code="captured_payment_mismatch",
+            )
+        if attempt.provider_config and attempt.provider_config.environment != intent.environment:
+            raise APIError(
+                "Refunds for this provider route are unavailable.",
+                status=501,
+                type="unsupported_operation",
+                code="provider_refund_unavailable",
+            )
+        _adapter_for_refund(attempt)
+        refund = Refund.objects.create(
+            merchant=merchant,
+            payment_intent=intent,
+            payment_attempt=attempt,
+            provider_config=attempt.provider_config,
+            amount=amount,
+            currency=intent.currency,
+            status=Refund.STATUS_PENDING,
+            provider=attempt.provider,
+            idempotency_key=idempotency_key,
+            reason=reason,
+            metadata=metadata,
+        )
+        if idempotency_key:
+            IdempotencyRecord.objects.get_or_create(
+                merchant=merchant,
+                key=f"refund:{idempotency_key}",
+                defaults={
+                    "payment_intent": intent,
+                    "response_object_type": "refund",
+                    "response_object_id": refund.public_id,
+                },
+            )
+    emit_event(
+        merchant,
+        "refund.pending",
+        serialize_refund(refund),
+        idempotency_key=f"refund.pending:{refund.public_id}",
+    )
+    return refund, True
+
+
+def _apply_refund_error(refund, exc):
+    result = ProviderOperationResult(
+        status="pending" if getattr(exc, "ambiguous", False) else "failed",
+        provider_status="unknown" if getattr(exc, "ambiguous", False) else "failed",
+        failure_code=str(getattr(exc, "code", "provider_error"))[:80],
+        failure_category="ambiguous_provider_response" if getattr(exc, "ambiguous", False) else "provider_rejected",
+    )
+    return reconcile_refund(refund, result)
+
+
+@transaction.atomic
+def reconcile_refund(refund, result, *, request_id=""):
+    if not isinstance(result, ProviderOperationResult) or result.status not in {
+        Refund.STATUS_PENDING,
+        Refund.STATUS_SUCCEEDED,
+        Refund.STATUS_FAILED,
+        Refund.STATUS_CANCELED,
+    }:
+        raise ValueError("Invalid normalized refund result.")
+    refund_id = refund.pk if isinstance(refund, Refund) else refund
+    refund = (
+        Refund.objects.select_for_update()
+        .select_related("merchant", "payment_intent", "payment_attempt", "provider_config")
+        .get(pk=refund_id)
+    )
+    intent = PaymentIntent.objects.select_for_update().get(pk=refund.payment_intent_id)
+    list(Refund.objects.select_for_update().filter(payment_intent=intent).values_list("pk", flat=True))
+    if refund.status == Refund.STATUS_SUCCEEDED and result.status != Refund.STATUS_SUCCEEDED:
+        return refund
+    if (
+        result.provider_reference
+        and refund.provider_refund_id
+        and refund.provider_refund_id != result.provider_reference
+    ):
+        raise ValueError("Provider refund ID does not match the reserved refund.")
+
+    previous_status = refund.status
+    refund.status = result.status
+    refund.provider_status = result.provider_status[:80]
+    refund.provider_refund_id = refund.provider_refund_id or result.provider_reference[:160]
+    refund.failure_code = result.failure_code[:80]
+    refund.failure_category = result.failure_category[:80]
+    refund.last_reconciled_at = timezone.now()
+    refund.last_error_at = timezone.now() if result.failure_code else None
+    if result.safe_metadata:
+        refund.metadata = {**refund.metadata, "provider": result.safe_metadata}
+    refund.save()
+
+    if refund.status == Refund.STATUS_SUCCEEDED:
+        record_refund(refund, request_id)
+        succeeded_total = (
+            Refund.objects.filter(payment_intent=intent, status=Refund.STATUS_SUCCEEDED)
+            .aggregate(total=Sum("amount"))["total"]
+            or 0
+        )
+        intent.status = (
+            PaymentIntent.STATUS_REFUNDED
+            if succeeded_total >= intent.amount
+            else PaymentIntent.STATUS_PARTIALLY_REFUNDED
+        )
+        intent.save(update_fields=["status", "updated_at"])
+
+    if refund.status != previous_status or previous_status == Refund.STATUS_PENDING:
+        emit_event(
+            refund.merchant,
+            f"refund.{refund.status}",
+            serialize_refund(refund),
+            idempotency_key=f"refund.{refund.status}:{refund.public_id}",
+        )
     return refund
+
+
+def _fresh_refund_adapter(refund):
+    merchant = enforce_merchant_routing(
+        Merchant.objects.get(pk=refund.merchant_id),
+        environment=refund.payment_intent.environment,
+    )
+    attempt = (
+        PaymentAttempt.objects.select_related("provider_config", "provider_config__connection")
+        .get(pk=refund.payment_attempt_id, intent__merchant=merchant)
+    )
+    if attempt.status != PaymentAttempt.STATUS_SUCCEEDED:
+        raise APIError(
+            "The provider payment is no longer refundable.",
+            status=409,
+            type="payment_error",
+            code="payment_not_captured",
+        )
+    if attempt.provider_config:
+        config = ProviderConfig.objects.select_related("connection").get(
+            pk=attempt.provider_config_id,
+            merchant=merchant,
+            environment=refund.payment_intent.environment,
+        )
+        if not authorized_config(merchant, config):
+            raise APIError(
+                "The provider connection is no longer authorized.",
+                status=403,
+                type="permission_error",
+                code="provider_connection_inactive",
+            )
+        attempt.provider_config = config
+    try:
+        enforce_provider_call(
+            merchant,
+            ip_hash=refund.payment_intent.request_ip_hash,
+            environment=refund.payment_intent.environment,
+        )
+    except AbuseLimitExceeded as exc:
+        raise APIError(str(exc), status=429, type="rate_limit_error", code=exc.code) from exc
+    except AbuseControlError as exc:
+        raise APIError(str(exc), status=503, type="api_error", code=exc.code) from exc
+    return _adapter_for_refund(attempt)
+
+
+def create_refund(request, merchant, intent, payload, idempotency_key=""):
+    refund, created = _reserve_refund(merchant, intent, payload, idempotency_key)
+    if not created:
+        return refund
+    try:
+        adapter = _fresh_refund_adapter(refund)
+    except APIError as exc:
+        _apply_refund_error(
+            refund,
+            ProviderRequestError(exc.message, code=exc.code, ambiguous=False),
+        )
+        raise
+    try:
+        result = adapter.refund(refund)
+    except ProviderRequestError as exc:
+        return _apply_refund_error(refund, exc)
+    except (ProviderAdapterError, ImproperlyConfigured) as exc:
+        return _apply_refund_error(
+            refund,
+            ProviderRequestError(
+                "Provider refund outcome is not yet known.",
+                code=exc.__class__.__name__,
+                ambiguous=True,
+            ),
+        )
+    return reconcile_refund(refund, result, request_id=getattr(request, "request_id", ""))
+
+
+def reconcile_pending_refund(refund_id):
+    refund = (
+        Refund.objects.select_related("merchant", "payment_intent", "payment_attempt", "provider_config")
+        .filter(pk=refund_id, status=Refund.STATUS_PENDING)
+        .first()
+    )
+    if not refund:
+        return None
+    try:
+        adapter = _fresh_refund_adapter(refund)
+    except APIError:
+        return refund
+    try:
+        result = adapter.retrieve_refund(refund)
+    except ProviderRequestError as exc:
+        return _apply_refund_error(refund, exc)
+    except (ProviderAdapterError, ImproperlyConfigured) as exc:
+        return _apply_refund_error(
+            refund,
+            ProviderRequestError(
+                "Provider refund lookup is not yet conclusive.",
+                code=exc.__class__.__name__,
+                ambiguous=True,
+            ),
+        )
+    return reconcile_refund(refund, result)
 
 
 def serialize_refund(refund):
@@ -382,6 +719,9 @@ def serialize_refund(refund):
         "currency": refund.currency,
         "status": refund.status,
         "provider": refund.provider,
+        "provider_status": refund.provider_status,
+        "failure_code": refund.failure_code,
+        "reconciliation_required": refund.status == Refund.STATUS_PENDING,
         "reason": refund.reason,
         "metadata": refund.metadata,
         "created_at": refund.created_at.isoformat(),
@@ -416,6 +756,11 @@ def record_webhook(provider, payload):
     if public_id and status in {"paid", "confirmed", "succeeded"}:
         intent = PaymentIntent.objects.filter(public_id=public_id).first()
         if intent:
+            was_settled = intent.status in {
+                PaymentIntent.STATUS_SUCCEEDED,
+                PaymentIntent.STATUS_PARTIALLY_REFUNDED,
+                PaymentIntent.STATUS_REFUNDED,
+            }
             if intent.status not in {PaymentIntent.STATUS_PARTIALLY_REFUNDED, PaymentIntent.STATUS_REFUNDED}:
                 intent.mark_succeeded()
             record_payment_success(intent)
@@ -442,6 +787,15 @@ def record_webhook(provider, payload):
                         invoice.confirmations_seen = int(confirmations)
                     invoice.settlement_state = invoice.SETTLEMENT_CONFIRMED
                     invoice.save(update_fields=["transaction_id", "confirmations_seen", "settlement_state", "updated_at"])
+            if not was_settled:
+                record_payment_outcome(
+                    intent.merchant,
+                    succeeded=True,
+                    ip_hash=intent.request_ip_hash,
+                    amount=intent.amount,
+                    provider_risk=payload.get("provider_risk", ""),
+                    environment=intent.environment,
+                )
             ProviderEvent.objects.create(
                 merchant=intent.merchant,
                 provider=provider,
@@ -484,6 +838,14 @@ def record_webhook(provider, payload):
             if not settled and not available:
                 intent.status = PaymentIntent.STATUS_EXPIRED if status == "expired" else PaymentIntent.STATUS_FAILED
                 intent.save(update_fields=["status", "updated_at"])
+                record_payment_outcome(
+                    intent.merchant,
+                    succeeded=False,
+                    ip_hash=intent.request_ip_hash,
+                    amount=intent.amount,
+                    provider_risk=payload.get("provider_risk", ""),
+                    environment=intent.environment,
+                )
             ProviderEvent.objects.create(
                 merchant=intent.merchant,
                 provider=provider,

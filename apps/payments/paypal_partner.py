@@ -362,4 +362,9 @@ def seller_id_from_event(event):
     for unit in resource.get("purchase_units") or []:
         if isinstance(unit, dict) and isinstance(unit.get("payee"), dict):
             candidates.append(unit["payee"].get("merchant_id"))
+    for disputed in resource.get("disputed_transactions") or []:
+        if not isinstance(disputed, dict):
+            continue
+        seller = disputed.get("seller") if isinstance(disputed.get("seller"), dict) else {}
+        candidates.extend([seller.get("merchant_id"), seller.get("payer_id")])
     return next((value for value in candidates if isinstance(value, str) and PAYPAL_MERCHANT_ID_RE.fullmatch(value)), "")

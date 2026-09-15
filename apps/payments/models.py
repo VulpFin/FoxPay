@@ -26,6 +26,10 @@ def refund_id():
     return generate_id("fp_re")
 
 
+def provider_operation_id():
+    return uuid.uuid4().hex
+
+
 def payment_link_token():
     return generate_id("fp_link")
 
@@ -64,6 +68,7 @@ class Merchant(TimeStampedModel):
     default_currency = models.CharField(max_length=3, default="USD")
     status = models.CharField(max_length=24, choices=STATUS_CHOICES, default=STATUS_PENDING)
     live_payments_enabled = models.BooleanField(default=False)
+    routing_enabled = models.BooleanField(default=True)
     allow_legacy_provider_configs = models.BooleanField(default=False)
     approved_at = models.DateTimeField(blank=True, null=True)
     approved_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, related_name="approved_merchants", blank=True, null=True)
@@ -71,6 +76,8 @@ class Merchant(TimeStampedModel):
     reviewed_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, related_name="reviewed_merchants", blank=True, null=True)
     suspended_at = models.DateTimeField(blank=True, null=True)
     suspension_reason = models.CharField(max_length=500, blank=True)
+    temporarily_restricted_until = models.DateTimeField(blank=True, null=True)
+    temporary_restriction_reason = models.CharField(max_length=80, blank=True)
     risk_level = models.CharField(max_length=24, default="unreviewed")
     card_provider = models.CharField(max_length=40, default="mock")
     crypto_provider = models.CharField(max_length=40, default="manual")
@@ -500,6 +507,7 @@ class PaymentIntent(TimeStampedModel):
     success_url = models.URLField(max_length=1000, blank=True)
     cancel_url = models.URLField(max_length=1000, blank=True)
     metadata = models.JSONField(default=dict, blank=True)
+    request_ip_hash = models.CharField(max_length=64, blank=True, editable=False)
 
     class Meta:
         indexes = [
@@ -650,14 +658,41 @@ class Refund(TimeStampedModel):
     status = models.CharField(max_length=24, default=STATUS_CREATED)
     provider = models.CharField(max_length=40, blank=True)
     provider_refund_id = models.CharField(max_length=160, blank=True)
+    provider_idempotency_key = models.CharField(max_length=64, default=provider_operation_id, editable=False)
+    idempotency_key = models.CharField(max_length=160, blank=True)
+    provider_status = models.CharField(max_length=80, blank=True)
+    failure_code = models.CharField(max_length=80, blank=True)
+    failure_category = models.CharField(max_length=80, blank=True)
+    last_error_at = models.DateTimeField(blank=True, null=True)
+    last_reconciled_at = models.DateTimeField(blank=True, null=True)
     reason = models.CharField(max_length=240, blank=True)
     metadata = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["provider_idempotency_key"],
+                name="unique_refund_provider_idempotency",
+            ),
+            models.UniqueConstraint(
+                fields=["merchant", "idempotency_key"],
+                condition=~models.Q(idempotency_key=""),
+                name="unique_merchant_refund_idempotency",
+            ),
+            models.UniqueConstraint(
+                fields=["merchant", "provider", "provider_refund_id"],
+                condition=~models.Q(provider_refund_id=""),
+                name="unique_merchant_provider_refund",
+            ),
+        ]
 
 
 class Dispute(TimeStampedModel):
     uuid = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
     merchant = models.ForeignKey(Merchant, on_delete=models.PROTECT, related_name="disputes")
     payment_intent = models.ForeignKey(PaymentIntent, on_delete=models.PROTECT, related_name="disputes")
+    payment_attempt = models.ForeignKey(PaymentAttempt, on_delete=models.PROTECT, related_name="disputes", blank=True, null=True)
+    provider_config = models.ForeignKey(ProviderConfig, on_delete=models.SET_NULL, related_name="disputes", blank=True, null=True)
     provider = models.CharField(max_length=40)
     provider_dispute_id = models.CharField(max_length=160, blank=True)
     reason = models.CharField(max_length=120, blank=True)
@@ -665,6 +700,37 @@ class Dispute(TimeStampedModel):
     currency = models.CharField(max_length=3)
     status = models.CharField(max_length=40, default="needs_response")
     evidence_due_at = models.DateTimeField(blank=True, null=True)
+    metadata = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["merchant", "provider", "provider_dispute_id"],
+                condition=~models.Q(provider_dispute_id=""),
+                name="unique_merchant_provider_dispute",
+            ),
+        ]
+
+
+class AbuseAlert(TimeStampedModel):
+    STATUS_OPEN = "open"
+    STATUS_ACKNOWLEDGED = "acknowledged"
+    STATUS_RESOLVED = "resolved"
+
+    uuid = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    merchant = models.ForeignKey(Merchant, on_delete=models.CASCADE, related_name="abuse_alerts")
+    environment = models.CharField(max_length=12)
+    rule_code = models.CharField(max_length=80)
+    severity = models.CharField(max_length=16, default="high")
+    status = models.CharField(max_length=24, default=STATUS_OPEN)
+    request_ip_hash = models.CharField(max_length=64, blank=True)
+    summary = models.CharField(max_length=240)
+    counters = models.JSONField(default=dict, blank=True)
+    restricted_until = models.DateTimeField(blank=True, null=True)
+    resolved_at = models.DateTimeField(blank=True, null=True)
+
+    class Meta:
+        indexes = [models.Index(fields=["merchant", "status", "created_at"])]
 
 
 class LedgerAccount(TimeStampedModel):

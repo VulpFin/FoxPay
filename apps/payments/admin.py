@@ -2,6 +2,7 @@ from django.contrib import admin
 
 from .models import (
     APIKey,
+    AbuseAlert,
     AuditLog,
     CryptoInvoice,
     Customer,
@@ -39,10 +40,10 @@ class ProviderConfigInline(admin.TabularInline):
 
 @admin.register(Merchant)
 class MerchantAdmin(admin.ModelAdmin):
-    list_display = ("name", "slug", "owner", "status", "live_payments_enabled", "default_currency", "created_at")
-    list_filter = ("status", "live_payments_enabled", "card_provider", "crypto_provider")
+    list_display = ("name", "slug", "owner", "status", "routing_enabled", "live_payments_enabled", "default_currency", "created_at")
+    list_filter = ("status", "routing_enabled", "live_payments_enabled", "card_provider", "crypto_provider")
     search_fields = ("name", "slug", "support_email")
-    readonly_fields = ("status", "is_active", "live_payments_enabled", "allow_legacy_provider_configs", "approved_at", "approved_by", "reviewed_at", "reviewed_by", "suspended_at", "suspension_reason", "risk_level")
+    readonly_fields = ("status", "is_active", "routing_enabled", "live_payments_enabled", "allow_legacy_provider_configs", "approved_at", "approved_by", "reviewed_at", "reviewed_by", "suspended_at", "suspension_reason", "temporarily_restricted_until", "temporary_restriction_reason", "risk_level")
     inlines = [ProviderConfigInline]
 
 
@@ -179,6 +180,14 @@ class DisputeAdmin(admin.ModelAdmin):
     list_display = ("payment_intent", "provider", "reason", "amount", "currency", "status", "evidence_due_at")
     list_filter = ("status", "provider", "currency")
     search_fields = ("payment_intent__public_id", "provider_dispute_id", "reason")
+
+
+@admin.register(AbuseAlert)
+class AbuseAlertAdmin(admin.ModelAdmin):
+    list_display = ("merchant", "environment", "rule_code", "severity", "status", "restricted_until", "created_at")
+    list_filter = ("environment", "severity", "status", "rule_code")
+    search_fields = ("merchant__name", "merchant__slug", "rule_code", "summary")
+    readonly_fields = ("merchant", "environment", "rule_code", "request_ip_hash", "summary", "counters", "restricted_until", "created_at", "updated_at")
 
 
 class LedgerEntryInline(admin.TabularInline):

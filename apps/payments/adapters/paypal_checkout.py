@@ -26,7 +26,7 @@ from django.core.exceptions import ImproperlyConfigured
 from apps.payments.models import PaymentAttempt
 from apps.payments.templatetags.foxpay_money import THREE_DECIMAL as ISO_THREE_DECIMAL, ZERO_DECIMAL as ISO_ZERO_DECIMAL
 
-from .base import Capability, PaymentProviderAdapter, ProviderAdapterError
+from .base import Capability, PaymentProviderAdapter, ProviderAdapterError, ProviderOperationResult, ProviderRequestError
 
 PAYPAL_ADAPTERS = {"paypal", "paypal_checkout"}
 # Fox Pay counts minor units the way ISO does; PayPal quotes decimal strings
@@ -86,6 +86,10 @@ class PayPalCheckoutAdapter(PaymentProviderAdapter):
         Capability.HOSTED_CHECKOUT,
         Capability.WEBHOOKS,
         Capability.MULTICURRENCY,
+        Capability.IDEMPOTENCY,
+        Capability.REFUNDS,
+        Capability.PARTIAL_REFUNDS,
+        Capability.DISPUTES,
     ]
 
     # -- configuration ---------------------------------------------------
@@ -282,6 +286,83 @@ class PayPalCheckoutAdapter(PaymentProviderAdapter):
         return attempt
 
     create_attempt = create_checkout_session
+
+    @staticmethod
+    def _refund_result(data, refund):
+        minor, currency = capture_amount(data)
+        if minor != refund.amount or currency != refund.currency.upper():
+            raise ProviderRequestError(
+                "PayPal returned refund details that did not match the request.",
+                code="refund_details_mismatch",
+                ambiguous=True,
+            )
+        provider_status = str(data.get("status", ""))[:80]
+        status = {
+            "COMPLETED": "succeeded",
+            "PENDING": "pending",
+            "CANCELLED": "canceled",
+            "FAILED": "failed",
+        }.get(provider_status, "pending")
+        return ProviderOperationResult(
+            status=status,
+            provider_reference=str(data.get("id", ""))[:160],
+            provider_status=provider_status,
+            failure_code="refund_failed" if status == "failed" else "",
+            failure_category="provider_declined" if status == "failed" else "",
+        )
+
+    def refund(self, refund):
+        capture_id = refund.payment_attempt.provider_reference
+        if not capture_id:
+            raise ProviderRequestError("PayPal capture ID is unavailable.", code="payment_reference_missing")
+        body = {
+            "amount": {
+                "currency_code": refund.currency.upper(),
+                "value": minor_to_value(refund.amount, refund.currency),
+            },
+            "custom_id": refund.public_id[:127],
+        }
+        if refund.reason:
+            body["note_to_payer"] = refund.reason[:255]
+        try:
+            status, data = self.call(
+                "POST",
+                f"/v2/payments/captures/{capture_id}/refund",
+                body,
+                request_id=refund.provider_idempotency_key,
+            )
+        except ProviderAdapterError as exc:
+            raise ProviderRequestError(
+                "PayPal refund request outcome is not yet known.",
+                code=exc.__class__.__name__,
+                ambiguous="unreachable" in str(exc).lower(),
+            ) from exc
+        if status not in {200, 201}:
+            raise ProviderRequestError(
+                "PayPal rejected the refund request.",
+                code=data.get("name", "") or f"http_{status}",
+                ambiguous=status >= 500 or status == 429,
+            )
+        return self._refund_result(data, refund)
+
+    def retrieve_refund(self, refund):
+        if not refund.provider_refund_id:
+            return self.refund(refund)
+        try:
+            status, data = self.call("GET", f"/v2/payments/refunds/{refund.provider_refund_id}")
+        except ProviderAdapterError as exc:
+            raise ProviderRequestError(
+                "PayPal refund lookup is unavailable.",
+                code=exc.__class__.__name__,
+                ambiguous=True,
+            ) from exc
+        if status != 200:
+            raise ProviderRequestError(
+                "PayPal refund lookup failed.",
+                code=data.get("name", "") or f"http_{status}",
+                ambiguous=status >= 500 or status == 429,
+            )
+        return self._refund_result(data, refund)
 
     # -- settlement -------------------------------------------------------
     def capture(self, paypal_order_id):

@@ -1,9 +1,13 @@
+from datetime import datetime, timezone as datetime_timezone
+
 from django.db import transaction
 from django.utils import timezone
 
+from .abuse import record_payment_outcome
 from .events import emit_event
 from .ledger import record_payment_success
-from .models import AuditLog, MerchantProviderConnection, PaymentAttempt, PaymentIntent, ProviderEvent
+from .models import AuditLog, MerchantProviderConnection, PaymentAttempt, PaymentIntent, ProviderConfig, ProviderEvent, Refund
+from .reconciliation import reconcile_provider_dispute, reconcile_provider_refund
 from .services import serialize_intent
 
 
@@ -12,6 +16,14 @@ CONNECT_CHECKOUT_EVENTS = {
     "checkout.session.async_payment_succeeded",
     "checkout.session.async_payment_failed",
     "checkout.session.expired",
+}
+CONNECT_REFUND_EVENTS = {"refund.created", "refund.updated", "charge.refund.updated"}
+CONNECT_DISPUTE_EVENTS = {
+    "charge.dispute.created",
+    "charge.dispute.updated",
+    "charge.dispute.closed",
+    "charge.dispute.funds_withdrawn",
+    "charge.dispute.funds_reinstated",
 }
 
 
@@ -89,15 +101,33 @@ def handle_connect_event(connection, event):
             or str(data.get("currency", "")).upper() != intent.currency.upper()
         ):
             raise ValueError("Checkout details do not match intent and connection.")
+        was_settled = intent.status in {
+            PaymentIntent.STATUS_SUCCEEDED,
+            PaymentIntent.STATUS_PARTIALLY_REFUNDED,
+            PaymentIntent.STATUS_REFUNDED,
+        }
         safe_payload.update({"payment_intent": intent.public_id, "attempt_id": attempt.pk, "checkout_session": attempt.provider_reference})
         if event_type in {"checkout.session.completed", "checkout.session.async_payment_succeeded"} and data.get("payment_status") == "paid":
             attempt.status = PaymentAttempt.STATUS_SUCCEEDED
             attempt.provider_status = "paid"
-            attempt.save(update_fields=["status", "provider_status", "updated_at"])
+            attempt.provider_response_metadata = {
+                **attempt.provider_response_metadata,
+                "stripe_payment_intent_id": str(data.get("payment_intent") or "")[:160],
+                "stripe_payment_status": str(data.get("payment_status") or "")[:80],
+            }
+            attempt.save(update_fields=["status", "provider_status", "provider_response_metadata", "updated_at"])
             if intent.status not in {PaymentIntent.STATUS_REFUNDED, PaymentIntent.STATUS_PARTIALLY_REFUNDED}:
                 intent.status = PaymentIntent.STATUS_SUCCEEDED
                 intent.save(update_fields=["status", "updated_at"])
             record_payment_success(intent)
+            if not was_settled:
+                record_payment_outcome(
+                    connection.merchant,
+                    succeeded=True,
+                    ip_hash=intent.request_ip_hash,
+                    amount=intent.amount,
+                    environment=connection.environment,
+                )
             emit_event(connection.merchant, "payment_intent.succeeded", serialize_intent(intent), idempotency_key=f"payment_intent.succeeded:{intent.public_id}")
             normalized = "payment_intent.succeeded"
         elif event_type in {"checkout.session.async_payment_failed", "checkout.session.expired"}:
@@ -106,15 +136,95 @@ def handle_connect_event(connection, event):
                 attempt.provider_status = "expired" if event_type.endswith("expired") else "failed"
                 attempt.save(update_fields=["status", "provider_status", "updated_at"])
             remaining = intent.attempts.filter(status__in=[PaymentAttempt.STATUS_PENDING, PaymentAttempt.STATUS_ACTION_REQUIRED]).exists()
-            if not remaining and intent.status not in {PaymentIntent.STATUS_SUCCEEDED, PaymentIntent.STATUS_PARTIALLY_REFUNDED, PaymentIntent.STATUS_REFUNDED}:
+            if not remaining and not was_settled:
+                became_terminal = intent.status not in {PaymentIntent.STATUS_FAILED, PaymentIntent.STATUS_EXPIRED}
                 intent.status = PaymentIntent.STATUS_EXPIRED if event_type.endswith("expired") else PaymentIntent.STATUS_FAILED
                 intent.save(update_fields=["status", "updated_at"])
+                if became_terminal:
+                    record_payment_outcome(
+                        connection.merchant,
+                        succeeded=False,
+                        ip_hash=intent.request_ip_hash,
+                        amount=intent.amount,
+                        environment=connection.environment,
+                    )
             normalized = "payment_attempt.failed"
         else:
             if intent.status == PaymentIntent.STATUS_REQUIRES_PAYMENT:
                 intent.status = PaymentIntent.STATUS_PROCESSING
                 intent.save(update_fields=["status", "updated_at"])
             normalized = "payment_intent.processing"
+    elif event_type in CONNECT_REFUND_EVENTS:
+        config = connection.provider_configs.filter(kind=ProviderConfig.KIND_CARD).first()
+        if not config:
+            raise ValueError("Stripe provider configuration is missing.")
+        metadata = data.get("metadata") if isinstance(data.get("metadata"), dict) else {}
+        provider_status = str(data.get("status", ""))
+        normalized_status = {
+            "succeeded": Refund.STATUS_SUCCEEDED,
+            "pending": Refund.STATUS_PENDING,
+            "requires_action": Refund.STATUS_PENDING,
+            "failed": Refund.STATUS_FAILED,
+            "canceled": Refund.STATUS_CANCELED,
+        }.get(provider_status, Refund.STATUS_PENDING)
+        refund, error = reconcile_provider_refund(
+            config,
+            event_id=event_id,
+            provider_refund_id=str(data.get("id", "")),
+            provider_payment_id=str(data.get("payment_intent") or data.get("charge") or ""),
+            amount=data.get("amount"),
+            currency=data.get("currency", ""),
+            provider_status=provider_status,
+            normalized_status=normalized_status,
+            foxpay_refund_id=str(metadata.get("foxpay_refund_id", "")),
+            failure_code=str(data.get("failure_reason", "")),
+        )
+        if refund:
+            intent = refund.payment_intent
+            normalized = f"refund.{refund.status}"
+            safe_payload.update({"refund": refund.public_id, "provider_refund": refund.provider_refund_id})
+        else:
+            normalized = "refund.reconciliation_skipped"
+            safe_payload["reason"] = error
+    elif event_type in CONNECT_DISPUTE_EVENTS:
+        config = connection.provider_configs.filter(kind=ProviderConfig.KIND_CARD).first()
+        if not config:
+            raise ValueError("Stripe provider configuration is missing.")
+        evidence = data.get("evidence_details") if isinstance(data.get("evidence_details"), dict) else {}
+        due_by = evidence.get("due_by")
+        evidence_due_at = None
+        if isinstance(due_by, int) and due_by > 0:
+            evidence_due_at = datetime.fromtimestamp(due_by, tz=datetime_timezone.utc)
+        provider_status = str(data.get("status", ""))[:40]
+        normalized_status = {
+            "warning_needs_response": "needs_response",
+            "needs_response": "needs_response",
+            "warning_under_review": "under_review",
+            "under_review": "under_review",
+            "warning_closed": "closed",
+            "won": "won",
+            "lost": "lost",
+            "prevented": "won",
+        }.get(provider_status, provider_status or "open")
+        dispute, error = reconcile_provider_dispute(
+            config,
+            event_id=event_id,
+            provider_dispute_id=str(data.get("id", "")),
+            provider_payment_id=str(data.get("payment_intent") or data.get("charge") or ""),
+            amount=data.get("amount"),
+            currency=data.get("currency", ""),
+            reason=data.get("reason", ""),
+            status=normalized_status,
+            evidence_due_at=evidence_due_at,
+            safe_metadata={"provider_status": provider_status},
+        )
+        if dispute:
+            intent = dispute.payment_intent
+            normalized = "dispute.updated"
+            safe_payload.update({"dispute": str(dispute.uuid), "provider_dispute": dispute.provider_dispute_id})
+        else:
+            normalized = "dispute.reconciliation_skipped"
+            safe_payload["reason"] = error
 
     ProviderEvent.objects.create(
         merchant=connection.merchant, provider=namespace, provider_event_id=event_id,

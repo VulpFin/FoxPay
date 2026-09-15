@@ -4,7 +4,7 @@ from django.db.models import Q
 from django.urls import reverse
 
 from apps.payments.models import PaymentAttempt, PaymentIntent, ProviderConfig
-from .base import Capability, PaymentProviderAdapter, ProviderAdapterError
+from .base import Capability, PaymentProviderAdapter, ProviderAdapterError, ProviderOperationResult, ProviderRequestError
 
 
 STRIPE_ADAPTERS = {"stripe", "stripe_checkout"}
@@ -44,6 +44,9 @@ class StripeCheckoutAdapter(PaymentProviderAdapter):
         Capability.WEBHOOKS,
         Capability.IDEMPOTENCY,
         Capability.MULTICURRENCY,
+        Capability.REFUNDS,
+        Capability.PARTIAL_REFUNDS,
+        Capability.DISPUTES,
     ]
 
     def credential(self, name, fallback_setting=""):
@@ -176,6 +179,120 @@ class StripeCheckoutAdapter(PaymentProviderAdapter):
 
     create_attempt = create_checkout_session
 
+    def _refund_scope(self):
+        stripe_account = None
+        if self.provider_config:
+            self.provider_config.refresh_from_db(fields=["is_active", "connection"])
+            if not self.provider_config.is_active:
+                raise ProviderRequestError("Stripe routing is disabled.", code="route_disabled")
+            connection = self.provider_config.connection
+            if connection and connection.authorization_method == "stripe_connect":
+                connection.refresh_from_db(fields=["status", "revoked_at", "external_account_id"])
+                if connection.status != connection.STATUS_ACTIVE or connection.revoked_at or not connection.external_account_id:
+                    raise ProviderRequestError("Stripe connection is not active.", code="connection_inactive")
+                stripe_account = connection.external_account_id
+        return stripe_account
+
+    def _refund_reference(self, refund):
+        attempt = refund.payment_attempt
+        metadata = attempt.provider_response_metadata or {}
+        payment_intent_id = metadata.get("stripe_payment_intent_id", "")
+        charge_id = metadata.get("stripe_charge_id", "")
+        if not payment_intent_id and str(attempt.provider_reference).startswith("pi_"):
+            payment_intent_id = attempt.provider_reference
+        if not charge_id and str(attempt.provider_reference).startswith("ch_"):
+            charge_id = attempt.provider_reference
+        if not payment_intent_id and not charge_id:
+            raise ProviderRequestError("Stripe payment reference is unavailable.", code="payment_reference_missing")
+        return payment_intent_id, charge_id
+
+    @staticmethod
+    def _refund_result(data, *, expected_amount, expected_currency):
+        amount = object_value(data, "amount")
+        currency = str(object_value(data, "currency", "")).upper()
+        if amount != expected_amount or currency != expected_currency.upper():
+            raise ProviderRequestError(
+                "Stripe returned refund details that did not match the request.",
+                code="refund_details_mismatch",
+                ambiguous=True,
+            )
+        provider_status = str(object_value(data, "status", ""))[:80]
+        status = {
+            "succeeded": "succeeded",
+            "pending": "pending",
+            "requires_action": "pending",
+            "failed": "failed",
+            "canceled": "canceled",
+        }.get(provider_status, "pending")
+        return ProviderOperationResult(
+            status=status,
+            provider_reference=str(object_value(data, "id", ""))[:160],
+            provider_status=provider_status,
+            safe_metadata={
+                "failure_reason": str(object_value(data, "failure_reason", ""))[:80],
+                "pending_reason": str(object_value(data, "pending_reason", ""))[:80],
+            },
+            failure_code=str(object_value(data, "failure_reason", ""))[:80] if status == "failed" else "",
+            failure_category="provider_declined" if status == "failed" else "",
+        )
+
+    def refund(self, refund):
+        stripe = stripe_module()
+        stripe_account = self._refund_scope()
+        payment_intent_id, charge_id = self._refund_reference(refund)
+        params = {
+            "amount": refund.amount,
+            "metadata": {
+                "foxpay_refund_id": refund.public_id,
+                "foxpay_payment_intent": refund.payment_intent.public_id,
+            },
+        }
+        if payment_intent_id:
+            params["payment_intent"] = payment_intent_id
+        else:
+            params["charge"] = charge_id
+        if refund.reason in {"duplicate", "fraudulent", "requested_by_customer"}:
+            params["reason"] = refund.reason
+        try:
+            result = stripe.Refund.create(
+                **params,
+                api_key=self.secret_key(),
+                idempotency_key=refund.provider_idempotency_key,
+                **({"stripe_account": stripe_account} if stripe_account else {}),
+            )
+        except ProviderRequestError:
+            raise
+        except Exception as exc:
+            name = exc.__class__.__name__
+            ambiguous = name in {"APIConnectionError", "APIError", "RateLimitError"} or "Timeout" in name
+            raise ProviderRequestError(
+                "Stripe refund request failed.",
+                code=getattr(exc, "code", "") or name,
+                ambiguous=ambiguous,
+            ) from exc
+        return self._refund_result(result, expected_amount=refund.amount, expected_currency=refund.currency)
+
+    def retrieve_refund(self, refund):
+        if not refund.provider_refund_id:
+            return self.refund(refund)
+        stripe = stripe_module()
+        stripe_account = self._refund_scope()
+        try:
+            result = stripe.Refund.retrieve(
+                refund.provider_refund_id,
+                api_key=self.secret_key(),
+                **({"stripe_account": stripe_account} if stripe_account else {}),
+            )
+        except ProviderRequestError:
+            raise
+        except Exception as exc:
+            raise ProviderRequestError(
+                "Stripe refund lookup failed.",
+                code=getattr(exc, "code", "") or exc.__class__.__name__,
+                ambiguous=True,
+            ) from exc
+        return self._refund_result(result, expected_amount=refund.amount, expected_currency=refund.currency)
+
 
 def stripe_provider_config_query(provider=""):
     query = Q(adapter__in=STRIPE_ADAPTERS) | (Q(adapter="") & Q(provider__in=STRIPE_ADAPTERS))
@@ -241,5 +358,4 @@ def normalize_stripe_event(event):
         "stripe_payment_intent_id": data_object.get("payment_intent", ""),
         "stripe_payment_status": data_object.get("payment_status", ""),
         "livemode": data_object.get("livemode", False),
-        "raw": event,
     }

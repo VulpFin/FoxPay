@@ -45,6 +45,7 @@ urlpatterns = [
     path("seller/<slug:slug>/paypal/<uuid:connection_uuid>/disconnect/", paypal_partner_views.disconnect_paypal_partner, name="seller_paypal_disconnect"),
     path("api/v1/webhooks/paypal/partner/<str:environment>/", paypal_partner_views.paypal_partner_webhook, name="paypal_partner_webhook"),
     path("seller/<slug:slug>/keys/create/", merchant_views.create_key, name="seller_create_key"),
+    path("seller/<slug:slug>/payments/<str:public_id>/refund/", merchant_views.create_seller_refund, name="seller_create_refund"),
     path("seller/<slug:slug>/keys/<uuid:key_uuid>/revoke/", merchant_views.revoke_key, name="seller_revoke_key"),
     path("seller/<slug:slug>/keys/<uuid:key_uuid>/rotate/", merchant_views.rotate_key, name="seller_rotate_key"),
     path("seller/<slug:slug>/returns/add/", merchant_views.add_return_origin, name="seller_add_return_origin"),

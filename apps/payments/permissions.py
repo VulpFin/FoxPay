@@ -1,5 +1,6 @@
 from django.conf import settings
 from django.db.models import Q
+from django.utils import timezone
 
 from apps.accounts.identity import linked_subject
 
@@ -46,6 +47,10 @@ def routing_block_reason(merchant, environment=None):
     environment = environment or settings.FOXPAY_ENV
     if not merchant.is_active:
         return "merchant_disabled"
+    if not merchant.routing_enabled:
+        return "routing_killed"
+    if merchant.temporarily_restricted_until and merchant.temporarily_restricted_until > timezone.now():
+        return "routing_temporarily_restricted"
     if merchant.status == Merchant.STATUS_ACTIVE:
         if environment == "live" and not merchant.live_payments_enabled:
             return "live_payments_disabled"

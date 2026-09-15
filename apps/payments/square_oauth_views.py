@@ -13,7 +13,13 @@ from django.views.decorators.http import require_GET, require_POST
 
 from apps.accounts.identity import fresh_tg11_mfa
 
-from .adapters.square_webhooks import record_square_event, square_payment_update, verify_square_signature
+from .adapters.square_webhooks import (
+    record_square_event,
+    square_dispute_update,
+    square_payment_update,
+    square_refund_update,
+    verify_square_signature,
+)
 from .merchant_views import _merchant_with_capability, _mfa_step_up, _seller_audit
 from .models import AuditLog, MerchantProviderConnection, ProviderConfig, ProviderEvent
 from .onboarding import OnboardingStateError, begin_onboarding, consume_onboarding
@@ -43,7 +49,7 @@ def _configure_location(connection, location):
         "square_merchant_id": connection.external_account_id,
     }
     config.is_active = _location_is_ready(connection)
-    config.capabilities = ["card", "debit", "hosted_checkout"]
+    config.capabilities = ["card", "debit", "hosted_checkout", "refunds", "partial_refunds", "disputes"]
     config.save()
     connection.status = connection.STATUS_ACTIVE if config.is_active else connection.STATUS_RESTRICTED
     connection.last_error_code = "" if config.is_active else "webhook_not_configured"
@@ -245,4 +251,22 @@ def square_oauth_webhook(request, environment):
             AuditLog.objects.create(merchant=connection.merchant, action="square.webhook.reconciliation_skipped", object_type="provider_event", object_id=event["event_id"], metadata={"reason": error})
         if update:
             record_webhook(f"square-payment:{config.pk}", update)
-    return JsonResponse({"received": True, "recorded": recorded, "reconciled": bool(update)})
+        refund, refund_error = square_refund_update(config, event)
+        dispute, dispute_error = square_dispute_update(config, event)
+        for action, reason in (
+            ("square.refund_reconciliation_skipped", refund_error),
+            ("square.dispute_reconciliation_skipped", dispute_error),
+        ):
+            if reason and recorded:
+                AuditLog.objects.create(
+                    merchant=connection.merchant,
+                    action=action,
+                    object_type="provider_event",
+                    object_id=event["event_id"][:120],
+                    metadata={"reason": reason},
+                )
+    return JsonResponse({
+        "received": True,
+        "recorded": recorded,
+        "reconciled": bool(update or refund or dispute),
+    })

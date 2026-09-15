@@ -1058,7 +1058,14 @@ class StripeSavedMethodTests(TestCase):
 class PayPalCheckoutTests(TestCase):
     def setUp(self):
         user = get_user_model().objects.create_user(username="paypal-owner@example.com")
-        self.merchant = Merchant.objects.create(owner=user, name="VulpFin", slug="vulpfin")
+        self.merchant = Merchant.objects.create(
+            owner=user,
+            name="VulpFin",
+            slug="vulpfin",
+            status=Merchant.STATUS_ACTIVE,
+            live_payments_enabled=True,
+            allow_legacy_provider_configs=True,
+        )
         self.url = reverse("payments:paypal_webhook", args=["vulpfin", "paypal-primary"])
 
     def configure(self, webhook_id="WH-TEST-1", provider="paypal-primary"):

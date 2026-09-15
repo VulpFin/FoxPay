@@ -73,6 +73,19 @@ DATABASES = {
     "default": dj_database_url.config(default=f"sqlite:///{BASE_DIR / 'foxpay.sqlite3'}", conn_max_age=600)
 }
 
+FOXPAY_REDIS_URL = os.getenv("REDIS_URL", "")
+CACHES = {
+    "default": {
+        "BACKEND": (
+            "django.core.cache.backends.redis.RedisCache"
+            if FOXPAY_REDIS_URL
+            else "django.core.cache.backends.locmem.LocMemCache"
+        ),
+        "LOCATION": FOXPAY_REDIS_URL or "foxpay-development",
+        "TIMEOUT": 300,
+    }
+}
+
 AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
     {"NAME": "django.contrib.auth.password_validation.MinimumLengthValidator"},
@@ -137,6 +150,27 @@ FOXPAY_CARD_PROVIDER_CHECKOUT_URL = os.getenv("FOXPAY_CARD_PROVIDER_CHECKOUT_URL
 FOXPAY_CRYPTO_PROVIDER = os.getenv("FOXPAY_CRYPTO_PROVIDER", "manual")
 FOXPAY_WEBHOOK_SECRET = os.getenv("FOXPAY_WEBHOOK_SECRET", "")
 FOXPAY_API_RATE_LIMIT_PER_MINUTE = int(os.getenv("FOXPAY_API_RATE_LIMIT_PER_MINUTE", "120"))
+FOXPAY_TRUSTED_PROXY_IPS = tuple(
+    value.strip()
+    for value in os.getenv("FOXPAY_TRUSTED_PROXY_IPS", "").split(",")
+    if value.strip()
+)
+FOXPAY_API_IP_RATE_LIMIT_PER_MINUTE = int(os.getenv("FOXPAY_API_IP_RATE_LIMIT_PER_MINUTE", "180"))
+FOXPAY_INTENT_RATE_LIMIT_PER_MERCHANT = int(os.getenv("FOXPAY_INTENT_RATE_LIMIT_PER_MERCHANT", "60"))
+FOXPAY_INTENT_RATE_LIMIT_PER_IP = int(os.getenv("FOXPAY_INTENT_RATE_LIMIT_PER_IP", "30"))
+FOXPAY_PROVIDER_CALL_RATE_LIMIT_PER_MERCHANT = int(os.getenv("FOXPAY_PROVIDER_CALL_RATE_LIMIT_PER_MERCHANT", "120"))
+FOXPAY_PROVIDER_CALL_RATE_LIMIT_PER_IP = int(os.getenv("FOXPAY_PROVIDER_CALL_RATE_LIMIT_PER_IP", "60"))
+FOXPAY_ATTEMPT_AMOUNT_LIMIT_HOURLY = int(os.getenv("FOXPAY_ATTEMPT_AMOUNT_LIMIT_HOURLY", "10000000"))
+FOXPAY_ATTEMPT_AMOUNT_LIMIT_DAILY = int(os.getenv("FOXPAY_ATTEMPT_AMOUNT_LIMIT_DAILY", "50000000"))
+FOXPAY_SMALL_PAYMENT_AMOUNT = int(os.getenv("FOXPAY_SMALL_PAYMENT_AMOUNT", "200"))
+FOXPAY_CARD_TEST_MIN_OUTCOMES = int(os.getenv("FOXPAY_CARD_TEST_MIN_OUTCOMES", "12"))
+FOXPAY_CARD_TEST_FAILURE_RATIO = float(os.getenv("FOXPAY_CARD_TEST_FAILURE_RATIO", "0.8"))
+FOXPAY_CARD_TEST_SMALL_RATIO = float(os.getenv("FOXPAY_CARD_TEST_SMALL_RATIO", "0.7"))
+FOXPAY_TEMP_RESTRICTION_SECONDS = int(os.getenv("FOXPAY_TEMP_RESTRICTION_SECONDS", "1800"))
+FOXPAY_ABUSE_FAIL_CLOSED = env_bool("FOXPAY_ABUSE_FAIL_CLOSED", True)
+FOXPAY_WEBHOOK_MAX_ATTEMPTS = int(os.getenv("FOXPAY_WEBHOOK_MAX_ATTEMPTS", "8"))
+FOXPAY_WEBHOOK_MAX_BACKOFF_SECONDS = int(os.getenv("FOXPAY_WEBHOOK_MAX_BACKOFF_SECONDS", "21600"))
+FOXPAY_RECONCILE_AFTER_SECONDS = int(os.getenv("FOXPAY_RECONCILE_AFTER_SECONDS", "120"))
 FOXPAY_SECRET_ENCRYPTION_KEY = os.getenv("FOXPAY_SECRET_ENCRYPTION_KEY", SECRET_KEY)
 if os.getenv("FOXPAY_ENV", "test") == "live" and (not os.getenv("FOXPAY_SECRET_ENCRYPTION_KEY") or FOXPAY_SECRET_ENCRYPTION_KEY == SECRET_KEY):
     raise RuntimeError("Live FoxPay requires an independent FOXPAY_SECRET_ENCRYPTION_KEY.")
@@ -178,6 +212,47 @@ SQUARE_OAUTH_WEBHOOK_SIGNATURE_KEY_TEST = os.getenv("SQUARE_OAUTH_WEBHOOK_SIGNAT
 SQUARE_OAUTH_WEBHOOK_SIGNATURE_KEY_LIVE = os.getenv("SQUARE_OAUTH_WEBHOOK_SIGNATURE_KEY_LIVE", "")
 SQUARE_OAUTH_WEBHOOK_URL_TEST = os.getenv("SQUARE_OAUTH_WEBHOOK_URL_TEST", "")
 SQUARE_OAUTH_WEBHOOK_URL_LIVE = os.getenv("SQUARE_OAUTH_WEBHOOK_URL_LIVE", "")
+
+CELERY_BROKER_URL = os.getenv("CELERY_BROKER_URL", FOXPAY_REDIS_URL)
+CELERY_RESULT_BACKEND = os.getenv("CELERY_RESULT_BACKEND", FOXPAY_REDIS_URL)
+CELERY_TASK_ALWAYS_EAGER = env_bool("CELERY_TASK_ALWAYS_EAGER", False)
+CELERY_TASK_ACKS_LATE = True
+CELERY_TASK_REJECT_ON_WORKER_LOST = True
+CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
+CELERY_WORKER_PREFETCH_MULTIPLIER = 1
+CELERY_TASK_SOFT_TIME_LIMIT = int(os.getenv("CELERY_TASK_SOFT_TIME_LIMIT", "45"))
+CELERY_TASK_TIME_LIMIT = int(os.getenv("CELERY_TASK_TIME_LIMIT", "60"))
+FOXPAY_ASYNC_TASKS_ENABLED = env_bool("FOXPAY_ASYNC_TASKS_ENABLED", bool(CELERY_BROKER_URL))
+CELERY_BEAT_SCHEDULE = {
+    "foxpay-deliver-pending-webhooks": {
+        "task": "apps.payments.tasks.deliver_pending_webhooks",
+        "schedule": 30.0,
+    },
+    "foxpay-reconcile-pending-payments": {
+        "task": "apps.payments.tasks.reconcile_pending_payments",
+        "schedule": 300.0,
+    },
+    "foxpay-reconcile-pending-refunds": {
+        "task": "apps.payments.tasks.reconcile_pending_refunds",
+        "schedule": 300.0,
+    },
+    "foxpay-process-pending-provider-events": {
+        "task": "apps.payments.tasks.process_pending_provider_events",
+        "schedule": 30.0,
+    },
+    "foxpay-refresh-square-tokens": {
+        "task": "apps.payments.tasks.refresh_square_tokens",
+        "schedule": 21600.0,
+    },
+    "foxpay-check-provider-health": {
+        "task": "apps.payments.tasks.check_provider_health",
+        "schedule": 21600.0,
+    },
+    "foxpay-clear-expired-restrictions": {
+        "task": "apps.payments.tasks.clear_temporary_restrictions",
+        "schedule": 300.0,
+    },
+}
 
 SENTRY_DSN = os.getenv("SENTRY_DSN", "")
 SENTRY_ENVIRONMENT = os.getenv("SENTRY_ENVIRONMENT", FOXPAY_ENV)

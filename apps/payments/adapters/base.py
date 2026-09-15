@@ -37,6 +37,15 @@ class ProviderAdapterError(Exception):
     """Raised when a provider is configured but cannot create an attempt."""
 
 
+class ProviderRequestError(ProviderAdapterError):
+    """A provider operation failed, with explicit ambiguity semantics."""
+
+    def __init__(self, message, *, code="provider_error", ambiguous=False):
+        self.code = str(code)[:80]
+        self.ambiguous = ambiguous
+        super().__init__(message)
+
+
 class PaymentProviderAdapter:
     provider = "base"
     capabilities = []
@@ -57,6 +66,9 @@ class PaymentProviderAdapter:
         raise NotImplementedError
 
     def refund(self, refund):
+        raise NotImplementedError
+
+    def retrieve_refund(self, refund):
         raise NotImplementedError
 
     def verify_webhook(self, request):

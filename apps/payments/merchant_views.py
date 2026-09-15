@@ -20,7 +20,7 @@ from tg11_auth.models import TG11IdentityLink
 from .agreements import agreement_snapshot
 from .merchant_applications import MerchantApplicationForm, create_merchant_application
 from .events import emit_event
-from .models import APIKey, AuditLog, Dispute, Merchant, MerchantAllowedReturnOrigin, MerchantWebhookEndpoint, MerchantWebhookAttempt, MerchantMembership, PaymentIntent
+from .models import APIKey, AuditLog, Dispute, Merchant, MerchantAllowedReturnOrigin, MerchantWebhookEndpoint, MerchantWebhookAttempt, MerchantMembership, PaymentIntent, Refund
 from .permissions import can_manage, member_merchants, merchant_membership, routing_block_reason
 from .safe_urls import UnsafeURL, parsed_public_url, resolve_public_target, return_origin
 
@@ -116,7 +116,20 @@ def _render_detail(request, slug, section="overview", one_time_secret=""):
         context["paypal_partner_test_available"] = partner_available("test")
         context["paypal_partner_live_available"] = partner_available("live")
     elif section == "payments":
-        context["payments"] = merchant.payment_intents.order_by("-created_at")[:100]
+        payments = list(
+            merchant.payment_intents.prefetch_related("attempts", "refunds").order_by("-created_at")[:100]
+        )
+        for payment in payments:
+            refunded = sum(item.amount for item in payment.refunds.all() if item.status == Refund.STATUS_SUCCEEDED)
+            reserved = sum(
+                item.amount
+                for item in payment.refunds.all()
+                if item.status not in {Refund.STATUS_FAILED, Refund.STATUS_CANCELED}
+            )
+            payment.dashboard_refunded_amount = refunded
+            payment.dashboard_refundable_amount = max(payment.amount - reserved, 0)
+            payment.dashboard_refund_key = secrets.token_urlsafe(24)
+        context["payments"] = payments
     elif section == "disputes":
         context["disputes"] = merchant.disputes.select_related("payment_intent").order_by("-created_at")[:100]
     elif section == "keys":
@@ -160,6 +173,40 @@ def _seller_audit(request, merchant, action, object_type, object_id, metadata=No
         merchant=merchant, actor=request.user, action=action, object_type=object_type,
         object_id=str(object_id), request_id=getattr(request, "request_id", ""), metadata=metadata or {},
     )
+
+
+@login_required
+@require_http_methods(["POST"])
+def create_seller_refund(request, slug, public_id):
+    merchant = _merchant_with_capability(request, slug, "refunds")
+    intent = get_object_or_404(PaymentIntent, merchant=merchant, public_id=public_id)
+    try:
+        amount = int(request.POST.get("amount", ""))
+    except (TypeError, ValueError):
+        return HttpResponseBadRequest("Enter a valid refund amount.")
+    from .services import APIError, create_refund
+
+    try:
+        refund = create_refund(
+            request,
+            merchant,
+            intent,
+            {"amount": amount, "reason": request.POST.get("reason", "")},
+            idempotency_key=request.POST.get("idempotency_key", ""),
+        )
+    except APIError as exc:
+        messages.error(request, exc.message)
+        return redirect("seller_section", slug=slug, section="payments")
+    _seller_audit(
+        request,
+        merchant,
+        "refund.created",
+        "refund",
+        refund.public_id,
+        {"status": refund.status, "amount": refund.amount, "currency": refund.currency},
+    )
+    messages.success(request, f"Refund {refund.public_id} is {refund.status}.")
+    return redirect("seller_section", slug=slug, section="payments")
 
 
 @login_required
@@ -417,12 +464,14 @@ def review(request):
                 merchant.approved_at = now
                 merchant.approved_by = request.user
                 merchant.live_payments_enabled = True
+                merchant.routing_enabled = True
                 merchant.risk_level = "standard"
             elif action == "reject":
                 if merchant.status != Merchant.STATUS_PENDING:
                     return HttpResponseBadRequest("Only pending applications can be rejected.")
                 merchant.status = Merchant.STATUS_DISABLED
                 merchant.live_payments_enabled = False
+                merchant.routing_enabled = False
                 merchant.suspended_at = now
                 merchant.suspension_reason = reason
             elif action in {"restrict", "disable", "kill"}:
@@ -431,19 +480,29 @@ def review(request):
                 elif action == "disable":
                     merchant.status = Merchant.STATUS_DISABLED
                 merchant.live_payments_enabled = False
+                merchant.routing_enabled = False
                 merchant.suspended_at = now
                 merchant.suspension_reason = reason
             elif action == "reinstate":
-                if merchant.status not in {Merchant.STATUS_RESTRICTED, Merchant.STATUS_DISABLED} or not merchant.approved_at:
+                if (
+                    merchant.status not in {Merchant.STATUS_ACTIVE, Merchant.STATUS_RESTRICTED, Merchant.STATUS_DISABLED}
+                    or not merchant.approved_at
+                ):
                     return HttpResponseBadRequest("Merchant is not eligible for reinstatement.")
                 merchant.status = Merchant.STATUS_ACTIVE
                 merchant.live_payments_enabled = False
+                merchant.routing_enabled = True
+                merchant.temporarily_restricted_until = None
+                merchant.temporary_restriction_reason = ""
                 merchant.suspended_at = None
                 merchant.suspension_reason = ""
             elif action == "enable_live":
                 if merchant.status != Merchant.STATUS_ACTIVE or not merchant.approved_at or not merchant.is_active:
                     return HttpResponseBadRequest("Merchant is not approved for live routing.")
+                merchant.routing_enabled = True
                 merchant.live_payments_enabled = True
+                merchant.temporarily_restricted_until = None
+                merchant.temporary_restriction_reason = ""
                 merchant.suspended_at = None
                 merchant.suspension_reason = ""
             merchant.reviewed_at = now
@@ -456,7 +515,12 @@ def review(request):
                 object_type="merchant",
                 object_id=str(merchant.uuid),
                 request_id=getattr(request, "request_id", ""),
-                metadata={"reason": reason, "status": merchant.status, "live_payments_enabled": merchant.live_payments_enabled},
+                metadata={
+                    "reason": reason,
+                    "status": merchant.status,
+                    "routing_enabled": merchant.routing_enabled,
+                    "live_payments_enabled": merchant.live_payments_enabled,
+                },
             )
         messages.success(request, "Merchant review updated.")
         return redirect("seller_review")

@@ -33,7 +33,7 @@ from .paypal_partner import (
     show_seller_status,
     verify_partner_webhook,
 )
-from .paypal_events import process_paypal_event
+from .paypal_events import process_paypal_event, record_paypal_capture_event
 
 
 def _safe_event_payload(event, seller_id):
@@ -273,6 +273,11 @@ def paypal_partner_webhook(request, environment):
         "PAYMENT.CAPTURE.COMPLETED",
         "PAYMENT.CAPTURE.DENIED",
         "PAYMENT.CAPTURE.REVERSED",
+        "PAYMENT.CAPTURE.REFUNDED",
+        "PAYMENT.CAPTURE.REFUND.FAILED",
+        "CUSTOMER.DISPUTE.CREATED",
+        "CUSTOMER.DISPUTE.UPDATED",
+        "CUSTOMER.DISPUTE.RESOLVED",
     }
     if event_type in payment_event_types:
         config = connection.provider_configs.filter(
@@ -283,7 +288,11 @@ def paypal_partner_webhook(request, environment):
         if not config or connection.status != connection.STATUS_ACTIVE or connection.revoked_at:
             return JsonResponse({"received": True, "processed": False})
         try:
-            result = process_paypal_event(config, event)
+            result = (
+                record_paypal_capture_event(config, event)
+                if event_type == "CHECKOUT.ORDER.APPROVED"
+                else process_paypal_event(config, event)
+            )
         except (ProviderAdapterError, ImproperlyConfigured):
             return JsonResponse({"error": "PayPal payment event could not be processed."}, status=503)
         return JsonResponse({"received": True, **result})

@@ -5,7 +5,7 @@ from django.core.exceptions import ImproperlyConfigured
 from django.urls import reverse
 
 from apps.payments.models import PaymentAttempt
-from .base import Capability, PaymentProviderAdapter
+from .base import Capability, PaymentProviderAdapter, ProviderOperationResult
 from .stripe_checkout import StripeCheckoutAdapter
 from .paypal_checkout import PayPalCheckoutAdapter
 from .square_checkout import SquareCheckoutAdapter
@@ -13,7 +13,14 @@ from .square_checkout import SquareCheckoutAdapter
 
 class MockCardAdapter(PaymentProviderAdapter):
     provider = "mock"
-    capabilities = [Capability.CARD, Capability.DEBIT, Capability.HOSTED_CHECKOUT, Capability.IDEMPOTENCY]
+    capabilities = [
+        Capability.CARD,
+        Capability.DEBIT,
+        Capability.HOSTED_CHECKOUT,
+        Capability.IDEMPOTENCY,
+        Capability.REFUNDS,
+        Capability.PARTIAL_REFUNDS,
+    ]
 
     def create_checkout_session(self, request, intent, payload):
         attempt = PaymentAttempt.objects.create(
@@ -34,6 +41,15 @@ class MockCardAdapter(PaymentProviderAdapter):
         return attempt
 
     create_attempt = create_checkout_session
+
+    def refund(self, refund):
+        return ProviderOperationResult(
+            status="succeeded",
+            provider_reference=f"mock-{refund.provider_idempotency_key}",
+            provider_status="succeeded",
+        )
+
+    retrieve_refund = refund
 
 
 class HostedCardAdapter(PaymentProviderAdapter):

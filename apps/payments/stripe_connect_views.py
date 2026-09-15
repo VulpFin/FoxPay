@@ -100,7 +100,15 @@ def stripe_connect_callback(request, slug, environment):
                     display_name="Stripe", settings={"payment_method_types": ["card"]},
                 )
             config.is_active = state["ready"]
-            config.capabilities = state["capabilities"]
+            config.capabilities = [
+                "card",
+                "debit",
+                "wallet",
+                "hosted_checkout",
+                "refunds",
+                "partial_refunds",
+                "disputes",
+            ] if state["ready"] else []
             config.save()
             _seller_audit(request, merchant, "stripe.connected", "provider_connection", connection.uuid, {"environment": environment, "status": connection.status})
     except IntegrityError:

@@ -33,6 +33,9 @@ def record_payment_success(intent, request_id=""):
 
 @transaction.atomic
 def record_refund(refund, request_id=""):
+    existing = refund.ledger_transactions.filter(transaction_type="refund_succeeded").first()
+    if existing:
+        return existing
     clearing = get_account(refund.merchant, "merchant_payment_clearing", "Merchant payment clearing", LedgerAccount.TYPE_LIABILITY, refund.currency)
     cash = get_account(refund.merchant, "external_provider_receivable", "External provider receivable", LedgerAccount.TYPE_ASSET, refund.currency)
     tx = LedgerTransaction.objects.create(

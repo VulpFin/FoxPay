@@ -1,3 +1,23 @@
+x-foxpay-environment: &foxpay-environment
+  DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:-change-me-before-production}
+  DJANGO_DEBUG: ${DJANGO_DEBUG:-1}
+  DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:-127.0.0.1,localhost}
+  DJANGO_CSRF_TRUSTED_ORIGINS: ${DJANGO_CSRF_TRUSTED_ORIGINS:-}
+  DATABASE_URL: ${DATABASE_URL:-postgres://foxpay:foxpay_dev_password@db:5432/foxpay}
+  REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+  CELERY_BROKER_URL: ${CELERY_BROKER_URL:-redis://redis:6379/1}
+  CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND:-redis://redis:6379/2}
+  FOXPAY_ASYNC_TASKS_ENABLED: ${FOXPAY_ASYNC_TASKS_ENABLED:-1}
+  FOXPAY_ENV: ${FOXPAY_ENV:-test}
+  FOXPAY_SECRET_ENCRYPTION_KEY: ${FOXPAY_SECRET_ENCRYPTION_KEY:-change-me-to-a-separate-random-secret}
+  FOXPAY_CARD_PROVIDER: ${FOXPAY_CARD_PROVIDER:-mock}
+  FOXPAY_CRYPTO_PROVIDER: ${FOXPAY_CRYPTO_PROVIDER:-manual}
+  FOXPAY_WEBHOOK_SECRET: ${FOXPAY_WEBHOOK_SECRET:-change-me-for-provider-webhooks}
+  SENTRY_DSN: ${SENTRY_DSN:-}
+  SENTRY_ENVIRONMENT: ${SENTRY_ENVIRONMENT:-docker-dev}
+  SENTRY_TRACES_SAMPLE_RATE: ${SENTRY_TRACES_SAMPLE_RATE:-0.05}
+  SENTRY_SEND_DEFAULT_PII: ${SENTRY_SEND_DEFAULT_PII:-0}
+
 services:
   db:
     image: postgres:16-alpine
@@ -13,24 +33,25 @@ services:
       timeout: 5s
       retries: 5
 
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory-policy", "noeviction"]
+    volumes:
+      - foxpay_redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   web:
     build: .
     depends_on:
       db:
         condition: service_healthy
-    environment:
-      DJANGO_SECRET_KEY: change-me-before-production
-      DJANGO_DEBUG: "1"
-      DJANGO_ALLOWED_HOSTS: 127.0.0.1,localhost
-      DATABASE_URL: postgres://foxpay:foxpay_dev_password@db:5432/foxpay
-      FOXPAY_ENV: test
-      FOXPAY_CARD_PROVIDER: mock
-      FOXPAY_CRYPTO_PROVIDER: manual
-      FOXPAY_WEBHOOK_SECRET: change-me-for-provider-webhooks
-      SENTRY_DSN: https://f1558d3a7234288b3fc82fa1fcc2dbc8@o4511250973196288.ingest.us.sentry.io/4511311303933952
-      SENTRY_ENVIRONMENT: docker-dev
-      SENTRY_TRACES_SAMPLE_RATE: "0.05"
-      SENTRY_SEND_DEFAULT_PII: "0"
+      redis:
+        condition: service_healthy
+    environment: *foxpay-environment
     ports:
       - "8000:8000"
     healthcheck:
@@ -41,5 +62,28 @@ services:
       timeout: 10s
       retries: 3
 
+  worker:
+    build: .
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment: *foxpay-environment
+    command: ["celery", "-A", "foxpay", "worker", "--loglevel=INFO"]
+    restart: unless-stopped
+
+  beat:
+    build: .
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment: *foxpay-environment
+    command: ["celery", "-A", "foxpay", "beat", "--loglevel=INFO"]
+    restart: unless-stopped
+
 volumes:
   foxpay_postgres:
+  foxpay_redis:

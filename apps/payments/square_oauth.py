@@ -12,7 +12,14 @@ from .adapters.square_checkout import SQUARE_API_VERSION
 from .models import MerchantProviderConnection
 
 
-SQUARE_SCOPES = ("MERCHANT_PROFILE_READ", "ORDERS_READ", "ORDERS_WRITE", "PAYMENTS_READ", "PAYMENTS_WRITE")
+SQUARE_SCOPES = (
+    "MERCHANT_PROFILE_READ",
+    "ORDERS_READ",
+    "ORDERS_WRITE",
+    "PAYMENTS_READ",
+    "PAYMENTS_WRITE",
+    "DISPUTES_READ",
+)
 
 
 def square_base(environment):

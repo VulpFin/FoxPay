@@ -4,8 +4,10 @@ import hmac
 
 from django.db import transaction
 from django.utils import timezone
+from django.utils.dateparse import parse_datetime
 
-from apps.payments.models import PaymentAttempt, ProviderEvent, WebhookDelivery
+from apps.payments.models import PaymentAttempt, ProviderEvent, Refund, WebhookDelivery
+from apps.payments.reconciliation import reconcile_provider_dispute, reconcile_provider_refund
 
 
 def verify_square_signature(body, signature, signature_key, notification_url):
@@ -26,6 +28,12 @@ def verify_square_signature(body, signature, signature_key, notification_url):
 
 def _text(value, limit=160):
     return value[:limit] if isinstance(value, str) else ""
+
+
+def _square_merchant_id(config):
+    if config.connection_id:
+        return config.connection.external_account_id
+    return config.settings.get("square_merchant_id", "")
 
 
 def square_event_summary(config, event):
@@ -92,11 +100,13 @@ def square_payment_update(config, event):
     if attempt.intent.merchant_id != config.merchant_id:
         return None, "payment_details_mismatch"
     amount = payment.get("total_money") if isinstance(payment.get("total_money"), dict) else {}
+    expected_merchant_id = _square_merchant_id(config)
     if (
-        payment.get("location_id") != attempt.provider_response_metadata.get("square_location_id")
+        not expected_merchant_id
+        or event.get("merchant_id") != expected_merchant_id
+        or payment.get("location_id") != attempt.provider_response_metadata.get("square_location_id")
         or amount.get("amount") != attempt.amount
         or amount.get("currency") != attempt.currency
-        or (config.settings.get("square_merchant_id") and event.get("merchant_id") != config.settings["square_merchant_id"])
     ):
         return None, "payment_details_mismatch"
     status = {"COMPLETED": "succeeded", "FAILED": "failed", "CANCELED": "canceled"}.get(payment.get("status"))
@@ -114,3 +124,72 @@ def square_payment_update(config, event):
         "status": status,
         "provider_reference": payment_id,
     }, ""
+
+
+def square_refund_update(config, event):
+    if event.get("type") not in {"refund.created", "refund.updated"}:
+        return None, ""
+    data = event.get("data") if isinstance(event.get("data"), dict) else {}
+    objects = data.get("object") if isinstance(data.get("object"), dict) else {}
+    refund = objects.get("refund") if isinstance(objects.get("refund"), dict) else {}
+    money = refund.get("amount_money") if isinstance(refund.get("amount_money"), dict) else {}
+    if (
+        event.get("merchant_id") != _square_merchant_id(config)
+        or refund.get("location_id") != config.settings.get("location_id")
+    ):
+        return None, "refund_owner_mismatch"
+    provider_status = str(refund.get("status", ""))
+    normalized_status = {
+        "COMPLETED": Refund.STATUS_SUCCEEDED,
+        "PENDING": Refund.STATUS_PENDING,
+        "REJECTED": Refund.STATUS_FAILED,
+        "FAILED": Refund.STATUS_FAILED,
+    }.get(provider_status, Refund.STATUS_PENDING)
+    return reconcile_provider_refund(
+        config,
+        event_id=event.get("event_id", ""),
+        provider_refund_id=str(refund.get("id", "")),
+        provider_payment_id=str(refund.get("payment_id", "")),
+        amount=money.get("amount"),
+        currency=money.get("currency", ""),
+        provider_status=provider_status,
+        normalized_status=normalized_status,
+        failure_code="refund_failed" if normalized_status == Refund.STATUS_FAILED else "",
+    )
+
+
+def square_dispute_update(config, event):
+    if event.get("type") not in {"dispute.created", "dispute.state.updated", "dispute.state.changed"}:
+        return None, ""
+    data = event.get("data") if isinstance(event.get("data"), dict) else {}
+    objects = data.get("object") if isinstance(data.get("object"), dict) else {}
+    dispute = objects.get("dispute") if isinstance(objects.get("dispute"), dict) else {}
+    money = dispute.get("amount_money") if isinstance(dispute.get("amount_money"), dict) else {}
+    disputed_payment = dispute.get("disputed_payment") if isinstance(dispute.get("disputed_payment"), dict) else {}
+    if (
+        event.get("merchant_id") != _square_merchant_id(config)
+        or dispute.get("location_id") != config.settings.get("location_id")
+    ):
+        return None, "dispute_owner_mismatch"
+    provider_status = str(dispute.get("state", ""))
+    normalized_status = {
+        "EVIDENCE_REQUIRED": "needs_response",
+        "PROCESSING": "under_review",
+        "WON": "won",
+        "LOST": "lost",
+        "ACCEPTED": "accepted",
+    }.get(provider_status, provider_status.lower() or "open")
+    due = dispute.get("due_at")
+    evidence_due_at = parse_datetime(due) if isinstance(due, str) else None
+    return reconcile_provider_dispute(
+        config,
+        event_id=event.get("event_id", ""),
+        provider_dispute_id=str(dispute.get("id", "")),
+        provider_payment_id=str(disputed_payment.get("payment_id", "")),
+        amount=money.get("amount"),
+        currency=money.get("currency", ""),
+        reason=dispute.get("reason", ""),
+        status=normalized_status,
+        evidence_due_at=evidence_due_at,
+        safe_metadata={"provider_status": provider_status},
+    )

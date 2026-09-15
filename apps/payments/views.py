@@ -18,11 +18,17 @@ from .adapters.stripe_methods import record_setup_checkout
 from .adapters.base import ProviderAdapterError
 from .adapters.paypal_checkout import PayPalCheckoutAdapter
 from .adapters.nowpayments import ipn_attempt, normalize_ipn, provider_secret, validate_ipn_amount, verify_ipn
-from .adapters.square_webhooks import record_square_event, square_payment_update, verify_square_signature
+from .adapters.square_webhooks import (
+    record_square_event,
+    square_dispute_update,
+    square_payment_update,
+    square_refund_update,
+    verify_square_signature,
+)
 from .events import emit_event
 from .ledger import record_payment_success
 from .models import AuditLog, PaymentAttempt, PaymentIntent, ProviderConfig, SubscriptionReference
-from .paypal_events import process_paypal_event
+from .paypal_events import process_paypal_event, record_paypal_capture_event
 from .services import (
     APIError,
     authenticate_merchant,
@@ -92,7 +98,7 @@ def payment_intent_detail(request, public_id):
 def refunds(request, public_id):
     try:
         merchant = api_merchant(request, required_scope="refunds:write")
-        intent = get_object_or_404(PaymentIntent.objects.select_for_update(), public_id=public_id, merchant=merchant)
+        intent = get_object_or_404(PaymentIntent, public_id=public_id, merchant=merchant)
         refund = create_refund(
             request,
             merchant,
@@ -100,7 +106,10 @@ def refunds(request, public_id):
             parse_json(request),
             idempotency_key=request.headers.get("Idempotency-Key", ""),
         )
-        return JsonResponse(serialize_refund(refund), status=201)
+        return JsonResponse(
+            serialize_refund(refund),
+            status=202 if refund.status == "pending" else 201,
+        )
     except APIError as exc:
         return error_response(exc.message, exc.status, request_id=getattr(request, "request_id", ""), type=exc.type, code=exc.code)
 
@@ -266,7 +275,8 @@ def stripe_webhook(request, provider="stripe"):
                 return error_response("Stripe setup webhook has no provider configuration.", 503, request_id=getattr(request, "request_id", ""), code="provider_not_configured")
             processed = record_setup_checkout(config, event)
             return JsonResponse({"received": True, "processed": processed})
-        delivery = record_webhook(provider, normalize_stripe_event(event))
+        namespace = f"stripe:{config.pk}" if config else provider
+        delivery = record_webhook(namespace, normalize_stripe_event(event))
         return JsonResponse({"received": True, "processed": delivery.processed})
     except Exception:
         return error_response("Stripe webhook could not be processed.", 503, request_id=getattr(request, "request_id", ""), code="webhook_processing_failed")
@@ -367,7 +377,25 @@ def square_webhook(request, merchant_slug, provider):
             )
         if update:
             record_webhook(f"square-payment:{config.pk}", update)
-    return JsonResponse({"received": True, "recorded": recorded, "reconciled": bool(update)})
+        refund, refund_error = square_refund_update(config, event)
+        dispute, dispute_error = square_dispute_update(config, event)
+        for action, reason in (
+            ("square.refund_reconciliation_skipped", refund_error),
+            ("square.dispute_reconciliation_skipped", dispute_error),
+        ):
+            if reason and recorded:
+                AuditLog.objects.create(
+                    merchant=config.merchant,
+                    action=action,
+                    object_type="provider_event",
+                    object_id=event["event_id"][:120],
+                    metadata={"reason": reason},
+                )
+    return JsonResponse({
+        "received": True,
+        "recorded": recorded,
+        "reconciled": bool(update or refund or dispute),
+    })
 
 
 
@@ -410,7 +438,11 @@ def paypal_webhook(request, merchant_slug, provider):
         return error_response("PayPal webhook id and event_type are required.", 400, request_id=getattr(request, "request_id", ""), code="invalid_event")
 
     try:
-        result = process_paypal_event(config, event)
+        result = (
+            record_paypal_capture_event(config, event)
+            if event["event_type"] == "CHECKOUT.ORDER.APPROVED"
+            else process_paypal_event(config, event)
+        )
     except (ProviderAdapterError, ImproperlyConfigured) as exc:
         AuditLog.objects.create(
             merchant=config.merchant,
