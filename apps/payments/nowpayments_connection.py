@@ -45,8 +45,10 @@ def check_nowpayments_api_key(*, api_key, environment):
     except (TypeError, ValueError) as exc:
         raise NowPaymentsConnectionError("invalid_provider_response") from exc
     currencies = payload.get("currencies") if isinstance(payload, dict) else None
-    if not isinstance(currencies, list) or not currencies:
+    if not isinstance(currencies, list):
         raise NowPaymentsConnectionError("invalid_provider_response")
+    if not currencies:
+        raise NowPaymentsConnectionError("account_not_configured")
     return {"currency_count": min(len(currencies), 10000)}
 
 

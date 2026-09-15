@@ -59,6 +59,7 @@ This checklist separates technical deployment from permission to onboard outside
 ### NOWPayments
 
 - [ ] Self-service remains disabled until credential handling and contractual use are approved.
+- [ ] The seller account has an outcome wallet and at least one payment currency enabled before credential verification.
 - [ ] Seller enters API key and IPN secret once over HTTPS with fresh MFA; values never reappear in HTML/logs.
 - [ ] Each route's scoped IPN URL is registered and a signed sandbox notification passes amount/currency/ownership checks.
 - [ ] Removal guidance tells the seller to rotate/revoke at NOWPayments too.

@@ -35,4 +35,5 @@ NOWPayments credentials are entered once through the protected seller dashboard,
 encrypted immediately, and never shown again. Its signed IPN can settle only the
 matching merchant route, intent, order reference, amount, and currency. This is
 credential-based authorization, not OAuth. Automated crypto refunds remain out
-of scope.
+of scope. Credential verification also requires the NOWPayments account to have
+an outcome wallet and at least one payment currency enabled.

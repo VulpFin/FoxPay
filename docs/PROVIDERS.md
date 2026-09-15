@@ -103,7 +103,7 @@ Payment approval is not capture. An approved order is durably queued, then the w
 
 ## NOWPayments
 
-NOWPayments does not use an invented OAuth flow. An owner or administrator with fresh TG11 MFA enters that seller account's API key and IPN secret once over HTTPS. FoxPay encrypts both immediately, returns only a masked fingerprint, and never renders them again. The seller can test, replace, or remove the credentials; removal erases FoxPay ciphertext and disables all linked routes. The seller should also rotate or revoke the old credential at NOWPayments.
+NOWPayments does not use an invented OAuth flow. Before connecting it, the seller must add an outcome wallet and enable at least one payment currency in NOWPayments. An owner or administrator with fresh TG11 MFA then enters that seller account's API key and IPN secret once over HTTPS. FoxPay encrypts both immediately, returns only a masked fingerprint, and never renders them again. The seller can test, replace, or remove the credentials; removal erases FoxPay ciphertext and disables all linked routes. The seller should also rotate or revoke the old credential at NOWPayments.
 
 Each configuration receives a merchant- and route-scoped IPN URL:
 

@@ -128,6 +128,21 @@ class NowPaymentsConnectionTests(TestCase):
         self.assertNotContains(response, "np-api-key-secret-failed-secret")
         self.assertNotContains(response, "np-ipn-secret-failed-secret")
 
+    def test_account_without_currencies_shows_wallet_setup_guidance(self):
+        self.recent_mfa()
+        with patch(
+            "apps.payments.nowpayments_connection.check_nowpayments_api_key",
+            side_effect=NowPaymentsConnectionError("account_not_configured"),
+        ):
+            response = self.client.post(
+                reverse("seller_nowpayments_connect", args=[self.merchant.slug]),
+                self.credentials("unconfigured-account"),
+                follow=True,
+            )
+        self.assertContains(response, "Add an outcome wallet and enable at least one currency")
+        self.assertFalse(ProviderConfig.objects.get().is_active)
+        self.assertFalse(ProviderCredential.objects.exists())
+
     def test_multiple_accounts_and_cross_merchant_isolation(self):
         self.recent_mfa()
         self.assertEqual(self.connect("1111").status_code, 302)
@@ -240,6 +255,19 @@ class NowPaymentsConnectionTests(TestCase):
         self.assertEqual(get.call_args.kwargs["headers"], {"x-api-key": "private-api-key"})
         self.assertFalse(get.call_args.kwargs["allow_redirects"])
         self.assertNotIn("private-api-key", get.call_args.args[0])
+
+    @patch("apps.payments.nowpayments_connection.requests.get")
+    def test_api_key_check_reports_account_without_payment_currencies(self, get):
+        class Response:
+            status_code = 200
+
+            @staticmethod
+            def json():
+                return {"currencies": []}
+
+        get.return_value = Response()
+        with self.assertRaisesRegex(NowPaymentsConnectionError, "^account_not_configured$"):
+            check_nowpayments_api_key(api_key="private-api-key", environment="live")
 
     def test_linked_adapter_uses_seller_key_and_rejects_revoked_connection(self):
         self.recent_mfa()
