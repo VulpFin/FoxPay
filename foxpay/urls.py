@@ -1,7 +1,7 @@
 from django.contrib import admin
 from django.urls import include, path
 
-from .views import healthz
+from .views import healthz, readyz
 from apps.accounts import views as account_views
 from apps.payments import merchant_views
 from apps.payments import stripe_connect_views
@@ -13,6 +13,7 @@ from apps.payments import paypal_partner_views
 urlpatterns = [
     path("admin/", admin.site.urls),
     path("healthz/", healthz, name="healthz"),
+    path("readyz/", readyz, name="readyz"),
     path("auth/tg11/", include("tg11_auth.urls")),
     path("", account_views.dashboard, name="account_dashboard"),
     path("payments/", account_views.payments, name="account_payments"),
@@ -27,11 +28,11 @@ urlpatterns = [
     path("seller/agreement/", merchant_views.agreement, name="seller_agreement"),
     path("seller/review/", merchant_views.review, name="seller_review"),
     path("seller/<slug:slug>/stripe/<str:environment>/connect/", stripe_connect_views.begin_stripe_connect, name="seller_stripe_connect"),
-    path("seller/<slug:slug>/stripe/<str:environment>/callback/", stripe_connect_views.stripe_connect_callback, name="seller_stripe_callback"),
+    path("seller/stripe/<str:environment>/callback/", stripe_connect_views.stripe_connect_callback, name="seller_stripe_callback"),
     path("seller/<slug:slug>/stripe/<uuid:connection_uuid>/disconnect/", stripe_connect_views.disconnect_stripe_connect, name="seller_stripe_disconnect"),
     path("api/v1/webhooks/stripe/connect/<str:endpoint_environment>/", stripe_connect_views.stripe_connect_webhook, name="stripe_connect_webhook"),
     path("seller/<slug:slug>/square/<str:environment>/connect/", square_oauth_views.begin_square_oauth, name="seller_square_connect"),
-    path("seller/<slug:slug>/square/<str:environment>/callback/", square_oauth_views.square_oauth_callback, name="seller_square_callback"),
+    path("seller/square/<str:environment>/callback/", square_oauth_views.square_oauth_callback, name="seller_square_callback"),
     path("seller/<slug:slug>/square/<uuid:connection_uuid>/location/", square_oauth_views.select_square_location, name="seller_square_location"),
     path("seller/<slug:slug>/square/<uuid:connection_uuid>/disconnect/", square_oauth_views.disconnect_square_oauth, name="seller_square_disconnect"),
     path("api/v1/webhooks/square/oauth/<str:environment>/", square_oauth_views.square_oauth_webhook, name="square_oauth_webhook"),

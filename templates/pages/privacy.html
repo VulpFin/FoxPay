@@ -13,10 +13,10 @@
 
   <h2>1. What Fox Pay never stores</h2>
   <p>
-    <b>Card numbers, CVVs, expiry dates and bank credentials.</b> Card entry happens on the
-    provider's own hosted page. What comes back to us is a reference and, at most, a brand and the
-    last four digits so you can tell two saved methods apart. There is no card data in this
-    database to lose.
+    <b>Full card numbers, CVVs, magnetic-stripe/EMV data and bank login credentials.</b> Card entry
+    happens on the provider's own page. What can come back is a provider reference and limited
+    display data such as brand, expiry month/year and last four digits so you can recognize a saved
+    method. Fox Pay does not store the full payment credential.
   </p>
 
   <h2>2. What it does store</h2>
@@ -27,12 +27,13 @@
       never the instrument itself.</li>
     <li><b>Account:</b> your TG11 identity (a UUID), email address and display name, and which
       merchants you have paid.</li>
-    <li><b>Provider events:</b> the signed webhook payloads providers send us, kept so a payment can
-      be reconciled and an event is never processed twice.</li>
+    <li><b>Provider events:</b> an event id and the minimum safe fields needed to reconcile a
+      payment, refund, dispute or provider connection without processing the event twice.</li>
     <li><b>Ledger and audit entries</b> recording what happened to a payment and what an operator or
       an API key did.</li>
     <li><b>Merchant credentials</b> (API keys hashed, provider secrets encrypted at rest).</li>
-    <li><b>Operational data:</b> IP address, user agent, request ids and server logs.</li>
+    <li><b>Operational data:</b> IP address or a derived hash, user agent, request ids, abuse alerts
+      and server logs.</li>
   </ul>
 
   <h2>3. Where it goes</h2>
@@ -41,11 +42,14 @@
       reference and whatever they need to take the payment. Their privacy policy governs that leg:
       <a href="https://stripe.com/privacy" rel="noopener">Stripe</a>,
       <a href="https://www.paypal.com/us/legalhub/privacy-full" rel="noopener">PayPal</a>,
-      <a href="https://squareup.com/us/en/legal/general/privacy" rel="noopener">Square</a>, or the
-      crypto processor for a crypto invoice.</li>
+      <a href="https://squareup.com/us/en/legal/general/privacy" rel="noopener">Square</a>, or
+      <a href="https://nowpayments.io/privacy-policy" rel="noopener">NOWPayments</a> for a hosted
+      crypto invoice.</li>
     <li><b>To the merchant</b> you bought from: the payment's status, amount and reference, so they
       can fulfil the order.</li>
     <li><b>To TG11 Accounts</b>, for sign-in only.</li>
+    <li><b>To operational monitoring</b>, when enabled, for scrubbed error and performance data.
+      Sentry's default PII collection is disabled.</li>
     <li>Nowhere else, unless the law requires it or we need it to investigate fraud or abuse.</li>
   </ul>
   <p>Nothing here is sold, and there is no advertising or third-party tracking on this site.</p>
@@ -83,7 +87,8 @@
     Provider secrets and merchant credentials are encrypted at rest, API keys are stored hashed,
     webhooks are verified against each provider's signature before anything is believed, and
     payment amounts are checked against the intent before a payment is marked paid. Tokens are
-    never written to logs. If a breach affects you, we will tell you.
+    not intentionally written to logs. If an incident requires notice, we will notify affected
+    people as applicable law requires.
   </p>
 
   <h2>8. Children</h2>

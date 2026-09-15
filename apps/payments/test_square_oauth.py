@@ -142,11 +142,11 @@ class SquareOAuthTests(TestCase):
             patch("apps.payments.square_oauth_views.list_usable_locations", return_value=locations),
         ):
             response = self.client.get(
-                reverse("seller_square_callback", args=[self.merchant.slug, "test"]),
+                reverse("seller_square_callback", args=["test"]),
                 {"state": state, "code": "square-auth-code"},
             )
         if response.status_code != 400:
-            self.assertEqual(obtain.call_args.kwargs["redirect_uri"], "http://testserver/seller/square-seller/square/test/callback/")
+            self.assertEqual(obtain.call_args.kwargs["redirect_uri"], "http://testserver/seller/square/test/callback/")
         return response
 
     def test_begin_and_callback_encrypt_tokens_activate_one_location_and_reject_replay(self):
@@ -175,7 +175,7 @@ class SquareOAuthTests(TestCase):
         self.assertNotIn("square-access-secret", json.dumps(list(AuditLog.objects.values("metadata"))))
         self.assertEqual(self.callback(state, locations).status_code, 400)
 
-    def test_callback_state_cannot_cross_merchants(self):
+    def test_callback_state_cannot_cross_users(self):
         _, state = begin_onboarding(
             merchant=self.merchant,
             user=self.user,
@@ -185,7 +185,7 @@ class SquareOAuthTests(TestCase):
         )
         self.client.force_login(self.other_user)
         response = self.client.get(
-            reverse("seller_square_callback", args=[self.other_merchant.slug, "test"]),
+            reverse("seller_square_callback", args=["test"]),
             {"state": state, "code": "square-auth-code"},
         )
         self.assertEqual(response.status_code, 400)

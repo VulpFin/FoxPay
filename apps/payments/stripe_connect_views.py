@@ -31,7 +31,7 @@ def begin_stripe_connect(request, slug, environment):
         return HttpResponseBadRequest("Stripe Connect is unavailable for this environment.")
     if not fresh_tg11_mfa(request):
         return render(request, "accounts/step_up.html", {"action_name": "Connecting a payment provider", "next_path": f"/seller/{slug}/providers/"}, status=403)
-    callback = request.build_absolute_uri(reverse("seller_stripe_callback", args=[slug, environment]))
+    callback = request.build_absolute_uri(reverse("seller_stripe_callback", args=[environment]))
     session, state = begin_onboarding(
         merchant=merchant, user=request.user, provider="stripe", environment=environment,
         requested_scopes=["read_write"], return_path=reverse("seller_section", args=[slug, "providers"]),
@@ -43,17 +43,17 @@ def begin_stripe_connect(request, slug, environment):
 
 @login_required
 @require_GET
-def stripe_connect_callback(request, slug, environment):
-    merchant = _merchant_for_connection(request, slug)
+def stripe_connect_callback(request, environment):
     if environment not in {"test", "live"} or not connect_available(environment):
         return HttpResponseBadRequest("Stripe Connect is unavailable for this environment.")
     try:
         session = consume_onboarding(
-            raw_state=request.GET.get("state", ""), merchant=merchant, user=request.user,
+            raw_state=request.GET.get("state", ""), user=request.user,
             provider="stripe", environment=environment,
         )
     except OnboardingStateError:
         return HttpResponseBadRequest("Stripe connection state is invalid or expired.")
+    merchant = _merchant_for_connection(request, session.merchant.slug)
     if request.GET.get("error"):
         _seller_audit(request, merchant, "stripe.connect_cancelled", "onboarding_session", session.pk)
         messages.error(request, "Stripe connection was not completed.")

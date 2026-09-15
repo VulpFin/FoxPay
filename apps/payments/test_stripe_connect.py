@@ -107,10 +107,14 @@ class StripeConnectTests(TestCase):
             response = self.client.post(start)
         self.assertEqual(response.status_code, 302)
         state = authorize.call_args.kwargs["state"]
+        self.assertEqual(
+            authorize.call_args.kwargs["redirect_uri"],
+            "http://testserver/seller/stripe/test/callback/",
+        )
         session = ProviderOnboardingSession.objects.get()
         self.assertNotIn(state, session.state_hash)
         with patch("apps.payments.stripe_connect_views.exchange_code", return_value="acct_SellerTest") as exchange, patch("apps.payments.stripe_connect_views.verify_account", return_value={"ready": True, "country": "US", "capabilities": ["card_payments"]}):
-            callback = reverse("seller_stripe_callback", args=["seller", "test"])
+            callback = reverse("seller_stripe_callback", args=["test"])
             response = self.client.get(callback, {"state": state, "code": "ac_test"})
         self.assertEqual(response.status_code, 302)
         exchange.assert_called_once_with(environment="test", code="ac_test")
@@ -124,9 +128,9 @@ class StripeConnectTests(TestCase):
         self.assertEqual(config.adapter, "stripe")
         self.assertEqual(self.client.get(callback, {"state": state, "code": "ac_test"}).status_code, 400)
 
-    def test_callback_state_is_not_transferable_to_other_merchant(self):
+    def test_callback_state_is_not_transferable_to_another_user(self):
         _, state = begin_onboarding(merchant=self.merchant, user=self.user, provider="stripe", environment="test")
-        callback = reverse("seller_stripe_callback", args=["other", "test"])
+        callback = reverse("seller_stripe_callback", args=["test"])
         self.client.force_login(self.other_user)
         self.assertEqual(self.client.get(callback, {"state": state, "code": "ac_test"}).status_code, 400)
         self.assertIsNone(ProviderOnboardingSession.objects.get().consumed_at)

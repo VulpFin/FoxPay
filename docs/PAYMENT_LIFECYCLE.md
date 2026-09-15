@@ -1,31 +1,27 @@
 # Payment Lifecycle
 
-A payment intent represents a merchant's intent to collect a specific amount in a specific currency. It is not tied to one provider.
+A `PaymentIntent` is a merchant's request to collect one amount and currency. It is provider-neutral. A `PaymentAttempt` is one concrete checkout or invoice created through one provider configuration.
 
-Canonical statuses include:
+Canonical intent states include `created`, `awaiting_payment_method`, `pending`, `processing`, `requires_action`, `authorized`, `captured`, `succeeded`, `partially_refunded`, `refunded`, `failed`, `canceled`, and `expired`. Provider-native states remain on attempts and refund records as bounded status/metadata fields.
 
-- `created`
-- `awaiting_payment_method`
-- `pending`
-- `processing`
-- `requires_action`
-- `authorized`
-- `captured`
-- `partially_refunded`
-- `refunded`
-- `succeeded`
-- `failed`
-- `canceled`
-- `expired`
+## Attempts and failover
 
-Provider-specific statuses are stored separately on payment attempts as `provider_status` and `provider_response_metadata`.
+One intent can present several eligible attempts, such as Stripe and Square card checkout plus a NOWPayments crypto invoice. Priorities order the options. FoxPay does not automatically resubmit a payment to a backup provider because an automatic retry could double-charge; the customer must explicitly choose and complete another route.
 
-## Attempts
-
-A payment intent can have multiple attempts. For example, one card route can fail and another can succeed, or a BTC invoice can expire and a USDC route can later be selected.
-
-Fox Pay does not automatically retry money movement in a way that could double-charge. The routing layer exposes options; explicit customer or merchant action should drive failover.
+The provider-hosted page collects any card or wallet details. A success browser return means only that the customer returned. FoxPay settles the intent only after a verified provider event or an authenticated reconciliation result matches the merchant, attempt, external references, amount, and currency.
 
 ## Refunds
 
-Refunds are modeled independently and can be partial. Refund ledger entries reverse the payment clearing flow. The API currently performs this workflow for test-mode mock payments only; live provider refunds must be issued directly in the provider dashboard. Crypto refunds are not treated as card refunds; they need a separate destination-address workflow before production use.
+Refunds can be partial. FoxPay locks the intent and its refunds while calculating the remaining refundable amount, reserves a `pending` refund before making a network request, and sends a durable provider idempotency key.
+
+Stripe direct-charge, Square, PayPal capture, and mock refunds are implemented through the adapter interface. A definitive response or verified event moves the refund to `succeeded`, `failed`, or `canceled`; a timeout or unknown result remains `pending` and is revisited by reconciliation. Successful refund ledger entries are idempotent and move the intent to `partially_refunded` or `refunded` based on the total confirmed amount.
+
+NOWPayments and manual crypto refunds remain seller-controlled manual workflows. FoxPay does not request a destination address or initiate a crypto withdrawal.
+
+## Disputes
+
+Supported Stripe, Square, and PayPal chargeback/dispute events are normalized into merchant-scoped `Dispute` rows with provider status, amount, currency, reason, and evidence deadline where supplied. The seller dashboard provides visibility. Provider evidence submission is not claimed by this release.
+
+## Recovery
+
+Celery beat schedules old pending payment and refund reconciliation. Worker operations recheck merchant status, environment permission, provider connection health, kill switches, and abuse controls immediately before any provider call. Reconciliation never changes another merchant's object and never guesses success from a browser redirect.

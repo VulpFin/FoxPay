@@ -1,12 +1,32 @@
+import ipaddress
+
 from django.conf import settings
 from django.core.checks import Error, Tags, Warning, register
 
 
 @register(Tags.security, deploy=True)
 def production_payment_dependencies(app_configs, **kwargs):
-    if settings.FOXPAY_ENV != "live":
-        return []
     findings = []
+    if settings.FOXPAY_ENV not in {"test", "live"}:
+        findings.append(
+            Error(
+                "FOXPAY_ENV must be either 'test' or 'live'.",
+                id="payments.E000",
+            )
+        )
+    for trusted_proxy in settings.FOXPAY_TRUSTED_PROXY_IPS:
+        try:
+            ipaddress.ip_network(trusted_proxy, strict=False)
+        except ValueError:
+            findings.append(
+                Error(
+                    "FOXPAY_TRUSTED_PROXY_IPS contains an invalid IP or CIDR: "
+                    f"{trusted_proxy!r}.",
+                    id="payments.E004",
+                )
+            )
+    if settings.FOXPAY_ENV != "live":
+        return findings
     if not settings.FOXPAY_REDIS_URL:
         findings.append(
             Error(
@@ -33,6 +53,14 @@ def production_payment_dependencies(app_configs, **kwargs):
             Warning(
                 "No Django ADMINS are configured for payment-abuse alerts.",
                 id="payments.W001",
+            )
+        )
+    if not settings.FOXPAY_TRUSTED_PROXY_IPS:
+        findings.append(
+            Warning(
+                "No trusted reverse proxy is configured; client-IP abuse controls "
+                "will see only the proxy address.",
+                id="payments.W002",
             )
         )
     return findings

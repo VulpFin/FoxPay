@@ -492,16 +492,25 @@ def openapi(request):
                     "post": {"summary": "Receive normalized provider crypto webhook"}
                 },
                 "/api/v1/webhooks/stripe/{provider}/": {
-                    "post": {"summary": "Receive Stripe Checkout webhook events"}
+                    "post": {"summary": "Receive legacy Stripe Checkout webhook events"}
+                },
+                "/api/v1/webhooks/stripe/connect/{environment}/": {
+                    "post": {"summary": "Receive platform Stripe Connect events"}
                 },
                 "/api/v1/webhooks/nowpayments/{merchant_slug}/{provider}/": {
                     "post": {"summary": "Receive signed NOWPayments IPN events"}
                 },
                 "/api/v1/webhooks/square/{merchant_slug}/{provider}/": {
-                    "post": {"summary": "Record signed Square webhook events"}
+                    "post": {"summary": "Receive legacy signed Square webhook events"}
+                },
+                "/api/v1/webhooks/square/oauth/{environment}/": {
+                    "post": {"summary": "Receive Square OAuth seller events"}
                 },
                 "/api/v1/webhooks/paypal/{merchant_slug}/{provider}/": {
-                    "post": {"summary": "Capture and settle signed PayPal Orders v2 events"}
+                    "post": {"summary": "Receive legacy PayPal Orders v2 events"}
+                },
+                "/api/v1/webhooks/paypal/partner/{environment}/": {
+                    "post": {"summary": "Receive PayPal Partner seller events"}
                 },
             },
         }

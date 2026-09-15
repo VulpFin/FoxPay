@@ -1,0 +1,31 @@
+[Unit]
+Description=FoxPay Gunicorn web service
+After=network-online.target postgresql.service docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=foxpay
+Group=www-data
+WorkingDirectory=/var/www/FoxPay/app
+EnvironmentFile=/etc/foxpay/foxpay.env
+ExecStart=/var/www/FoxPay/.venv/bin/gunicorn --name foxpay --workers 3 --timeout 90 --graceful-timeout 30 --bind 127.10.0.11:8000 --access-logfile - --error-logfile - --capture-output foxpay.wsgi:application
+ExecReload=/bin/kill -s HUP $MAINPID
+KillSignal=SIGTERM
+TimeoutStopSec=45
+Restart=on-failure
+RestartSec=5
+UMask=0027
+NoNewPrivileges=true
+PrivateDevices=true
+PrivateTmp=true
+ProtectControlGroups=true
+ProtectHome=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectSystem=full
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=multi-user.target

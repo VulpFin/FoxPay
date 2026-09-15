@@ -1,0 +1,34 @@
+[Unit]
+Description=FoxPay Celery beat scheduler
+After=network-online.target postgresql.service docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=foxpay
+Group=www-data
+WorkingDirectory=/var/www/FoxPay/app
+EnvironmentFile=/etc/foxpay/foxpay.env
+RuntimeDirectory=foxpay-beat
+RuntimeDirectoryMode=0750
+StateDirectory=foxpay
+StateDirectoryMode=0750
+ExecStart=/var/www/FoxPay/.venv/bin/celery -A foxpay beat --loglevel=INFO --pidfile=/run/foxpay-beat/celerybeat.pid --schedule=/var/lib/foxpay/celerybeat-schedule
+KillSignal=SIGTERM
+TimeoutStopSec=45
+Restart=on-failure
+RestartSec=5
+UMask=0027
+NoNewPrivileges=true
+PrivateDevices=true
+PrivateTmp=true
+ProtectControlGroups=true
+ProtectHome=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectSystem=full
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=multi-user.target

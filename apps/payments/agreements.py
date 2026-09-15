@@ -4,7 +4,7 @@ from pathlib import Path
 from django.conf import settings
 
 
-AGREEMENT_VERSION = "draft-2026-09-14"
+AGREEMENT_VERSION = "draft-2026-09-15"
 ACCEPTABLE_USE_VERSION = "1.0"
 
 

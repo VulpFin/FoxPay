@@ -65,7 +65,7 @@ def begin_square_oauth(request, slug, environment):
         return HttpResponseBadRequest("Square OAuth is unavailable for this environment.")
     if not fresh_tg11_mfa(request):
         return _mfa_step_up(request, slug)
-    callback = request.build_absolute_uri(reverse("seller_square_callback", args=[slug, environment]))
+    callback = request.build_absolute_uri(reverse("seller_square_callback", args=[environment]))
     session, state = begin_onboarding(
         merchant=merchant, user=request.user, provider="square", environment=environment,
         requested_scopes=list(SQUARE_SCOPES), return_path=reverse("seller_section", args=[slug, "providers"]),
@@ -77,14 +77,19 @@ def begin_square_oauth(request, slug, environment):
 
 @login_required
 @require_GET
-def square_oauth_callback(request, slug, environment):
-    merchant = _merchant_for_connection(request, slug)
+def square_oauth_callback(request, environment):
     if environment not in {"test", "live"} or not oauth_available(environment):
         return HttpResponseBadRequest("Square OAuth is unavailable for this environment.")
     try:
-        session = consume_onboarding(raw_state=request.GET.get("state", ""), merchant=merchant, user=request.user, provider="square", environment=environment)
+        session = consume_onboarding(
+            raw_state=request.GET.get("state", ""),
+            user=request.user,
+            provider="square",
+            environment=environment,
+        )
     except OnboardingStateError:
         return HttpResponseBadRequest("Square connection state is invalid or expired.")
+    merchant = _merchant_for_connection(request, session.merchant.slug)
     if request.GET.get("error"):
         _seller_audit(request, merchant, "square.connect_cancelled", "onboarding_session", session.pk)
         messages.error(request, "Square connection was not completed.")
@@ -92,7 +97,7 @@ def square_oauth_callback(request, slug, environment):
     code = request.GET.get("code", "")
     if not code or len(code) > 512:
         return HttpResponseBadRequest("Square authorization code is missing.")
-    callback = request.build_absolute_uri(reverse("seller_square_callback", args=[slug, environment]))
+    callback = request.build_absolute_uri(reverse("seller_square_callback", args=[environment]))
     try:
         token, expires_at = obtain_token(
             environment=environment,

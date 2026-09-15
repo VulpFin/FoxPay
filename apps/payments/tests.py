@@ -673,11 +673,37 @@ class HealthCheckTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["status"], "ok")
 
+    def test_readyz_checks_database_and_cache_without_details(self):
+        response = self.client.get(reverse("readyz"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"status": "ready", "service": "foxpay"})
+
+    @patch("foxpay.views.cache.set", side_effect=RuntimeError("redis detail must stay private"))
+    def test_readyz_returns_a_redacted_service_unavailable_response(self, _set):
+        response = self.client.get(reverse("readyz"))
+
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.json(), {"status": "unavailable", "service": "foxpay"})
+        self.assertNotContains(response, "redis detail", status_code=503)
+
     def test_openapi_reports_api_title_and_request_id_header(self):
         response = self.client.get(reverse("payments:openapi"))
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["info"]["title"], "Fox Pay API")
+        self.assertIn(
+            "/api/v1/webhooks/stripe/connect/{environment}/",
+            response.json()["paths"],
+        )
+        self.assertIn(
+            "/api/v1/webhooks/square/oauth/{environment}/",
+            response.json()["paths"],
+        )
+        self.assertIn(
+            "/api/v1/webhooks/paypal/partner/{environment}/",
+            response.json()["paths"],
+        )
         self.assertTrue(response.headers["X-Request-ID"].startswith("req_"))
 
 

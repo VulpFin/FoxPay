@@ -20,7 +20,11 @@ Provider credentials are stored separately from non-sensitive provider settings 
 
 ## Webhooks
 
-Production webhook endpoints should use provider-specific signature validation. The generic Fox Pay webhook helper supports HMAC-SHA256 through `FOXPAY_WEBHOOK_SECRET`.
+Every production provider webhook uses its provider-specific signature or
+verification protocol before parsing authoritative fields. A signature is not
+enough by itself: FoxPay also checks the provider connection, merchant, external
+references, amount, and currency. Outgoing merchant webhooks use HMAC-SHA256
+with a per-endpoint encrypted secret.
 
 ## Monitoring
 
@@ -32,4 +36,7 @@ Every response includes `X-Request-ID`. Include that value when investigating AP
 
 ## Crypto custody
 
-The initial crypto adapter assumes merchants control their own wallets. Fox Pay should not hold private keys unless the product is explicitly upgraded into a custodial service with the required controls, insurance, accounting, and legal review.
+Merchant-controlled wallets and seller-owned NOWPayments accounts remain outside
+FoxPay custody. Do not add wallet private keys, mass payouts, or seller withdrawal
+authority to this service. Any future custodial product would require a separate
+architecture and legal/compliance program rather than an incremental flag here.

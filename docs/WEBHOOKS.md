@@ -1,78 +1,86 @@
 # Webhooks
 
-Fox Pay has two webhook directions.
+FoxPay receives signed provider events and sends independently signed normalized events to merchants. Browser callbacks and redirects are never authoritative payment notifications.
 
-## Incoming Provider Webhooks
+## Incoming provider events
 
-Provider webhook flow:
+For every supported receiver FoxPay:
 
-1. Provider calls Fox Pay.
-2. Fox Pay verifies the signature.
-3. Fox Pay records the delivery.
-4. Fox Pay normalizes provider state.
-5. Fox Pay updates payment records.
-6. Fox Pay emits merchant-facing webhook events.
+1. reads the untouched request body required by that provider's signature scheme;
+2. verifies the environment-specific signature or verification API result;
+3. resolves the provider account to one `MerchantProviderConnection` or legacy route;
+4. records an idempotent event with only the minimum safe fields needed for reconciliation;
+5. validates merchant, intent, attempt, external references, amount, and currency before mutation;
+6. acknowledges valid duplicates without applying state twice;
+7. queues work that should not happen in the request, including PayPal approved-order capture;
+8. emits a normalized merchant event after state changes.
 
-Incoming webhook processing is idempotent through provider event IDs.
+A valid signature alone is insufficient. Unknown accounts and mismatched objects cannot settle a payment.
 
-Stripe Checkout webhooks use Stripe's native signature verification and raw
-request body. Configure the endpoint in Stripe as:
-
-```text
-https://foxpay.fyi/api/v1/webhooks/stripe/stripe-primary/
-```
-
-Store the endpoint signing secret as the provider credential named
-`webhook_secret`. The `configure_stripe_provider` command can do this from
-`STRIPE_WEBHOOK_SECRET`.
-
-NOWPayments IPNs use `x-nowpayments-sig`, an HMAC-SHA512 signature of the JSON
-body with recursively sorted keys. Enter this callback URL in the NOWPayments
-dashboard and use the same URL when creating invoices:
+### Stripe Connect
 
 ```text
-https://foxpay.fyi/api/v1/webhooks/nowpayments/vulpfin/nowpayments-primary/
+https://foxpay.fyi/api/v1/webhooks/stripe/connect/test/
+https://foxpay.fyi/api/v1/webhooks/stripe/connect/live/
 ```
 
-The account-generated IPN secret must be stored as the encrypted provider
-credential `ipn_secret`. Until it is configured, this endpoint returns 503 and
-does not accept notifications. The `finished` status settles a matching Fox Pay
-invoice; `partially_paid` and intermediate states do not.
+Configure these as platform Connect destinations for events on connected accounts. FoxPay verifies `Stripe-Signature` with the matching platform Connect secret and routes using the event's top-level `account`. Production Stripe destinations may deliver test events; FoxPay still derives the effective environment from signed `livemode` and refuses live events on the test endpoint.
 
-Square webhook subscriptions use this production notification URL:
+Handled state includes Checkout completion/failure/expiry, refunds, disputes, account capability updates, and deauthorization.
+
+### Square OAuth
 
 ```text
-https://foxpay.fyi/api/v1/webhooks/square/vulpfin/square-primary/
+https://foxpay.fyi/api/v1/webhooks/square/oauth/test/
+https://foxpay.fyi/api/v1/webhooks/square/oauth/live/
 ```
 
-Run `configure_square_webhook_provider --merchant vulpfin --environment live`
-to create the inactive receiver before saving the subscription.
-Select `payment.created` and `payment.updated`; add `refund.created` and
-`refund.updated` when tracking Square refunds. Square displays the subscription
-Signature Key after it is saved. Put it in `SQUARE_WEBHOOK_SIGNATURE_KEY` in the
-server environment and rerun the command. The key is then stored as an encrypted
-`webhook_signature_key` provider credential. Never put it in Git or command-line
-arguments. The URL must match the saved subscription URL byte-for-byte, including
-its trailing slash, because Square signs the URL together with the raw body.
+The configured URL must match Square's saved notification URL byte-for-byte, including the trailing slash, because Square signs the URL and raw body together. FoxPay routes by Square merchant/location identifiers and validates payment, refund, and dispute ownership before reconciliation. OAuth revocation disables the connection.
 
-The Square receiver returns 503 for POST until the signature key is configured.
-Afterward it verifies `x-square-hmacsha256-signature`, deduplicates `event_id`,
-and records a minimal event summary without card details. When Square hosted
-checkout is active, it also reconciles `payment.created` and `payment.updated`
-for the exact order, location, amount, currency, and merchant. Unmatched or
-mismatched events never settle an intent. Other subscribed event types are only
-recorded; they do not mutate payment state.
+### PayPal Partner
 
-## Outgoing Merchant Webhooks
-
-Merchant webhook events are stored in `MerchantWebhookEvent`.
-
-Endpoints are stored in `MerchantWebhookEndpoint`. Endpoint secrets are encrypted at rest and used to sign outgoing requests with `FoxPay-Signature`.
-
-Deliver pending events:
-
-```powershell
-python manage.py deliver_webhooks
+```text
+https://foxpay.fyi/api/v1/webhooks/paypal/partner/test/
+https://foxpay.fyi/api/v1/webhooks/paypal/partner/live/
 ```
 
-The current implementation is a management-command outbox. Production deployments should run delivery through a durable queue with retries, backoff, dead-letter handling, and monitoring.
+FoxPay asks PayPal's verification endpoint to validate the transmission headers and body against the configured partner webhook ID. `CHECKOUT.ORDER.APPROVED` is durably recorded but is not marked paid; the worker rechecks authorization and captures the order using seller-scoped partner credentials. Capture, refund, dispute, onboarding, and consent-revocation events are normalized only after merchant ownership checks.
+
+### NOWPayments
+
+Each seller route has its own URL:
+
+```text
+https://foxpay.fyi/api/v1/webhooks/nowpayments/{merchant-slug}/{provider-code}/
+```
+
+NOWPayments signs canonicalized JSON with HMAC-SHA512 in `x-nowpayments-sig`. FoxPay verifies the seller connection's encrypted IPN secret before parsing settlement fields. The invoice/order reference, merchant, amount, and currency must match. Missing configuration returns `503`; invalid signatures return `401`; partial/intermediate payments do not settle an intent.
+
+Legacy operator-configured Stripe, Square, and PayPal route endpoints remain available only for migration compatibility. New sellers use the connection-scoped endpoints above.
+
+## Outgoing merchant events
+
+Each enabled `MerchantWebhookEndpoint` receives a compact JSON body:
+
+```json
+{
+  "id": "event-uuid",
+  "type": "payment.succeeded",
+  "created": "2026-09-15T00:00:00+00:00",
+  "data": {}
+}
+```
+
+Headers include:
+
+- `FoxPay-Event-ID`: stable event UUID for merchant idempotency;
+- `FoxPay-Signature`: lowercase hex HMAC-SHA256 of the exact request body using the endpoint secret;
+- `Content-Type: application/json`.
+
+The secret is shown once and encrypted at rest. Rotation creates a staged secret; activation retires the previous secret without exposing it again.
+
+Celery beat schedules pending events, and workers deliver them with bounded exponential backoff. Events are processed oldest-first in bounded batches; endpoint delivery has a Redis lock and a maximum attempt count. Delivery history records safe status/error information, not request credentials.
+
+Merchant webhook URLs use the shared safe HTTP client: HTTPS is required, unsafe address classes are rejected after DNS resolution, the validated connection target is pinned, redirects are not followed, and response size/time are bounded.
+
+The `deliver_webhooks` management command is retained for controlled recovery; it is not the normal production scheduler.

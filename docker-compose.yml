@@ -8,6 +8,10 @@ x-foxpay-environment: &foxpay-environment
   CELERY_BROKER_URL: ${CELERY_BROKER_URL:-redis://redis:6379/1}
   CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND:-redis://redis:6379/2}
   FOXPAY_ASYNC_TASKS_ENABLED: ${FOXPAY_ASYNC_TASKS_ENABLED:-1}
+  FOXPAY_CACHE_KEY_PREFIX: ${FOXPAY_CACHE_KEY_PREFIX:-foxpay}
+  CELERY_BROKER_KEY_PREFIX: ${CELERY_BROKER_KEY_PREFIX:-foxpay_}
+  CELERY_RESULT_KEY_PREFIX: ${CELERY_RESULT_KEY_PREFIX:-foxpay_}
+  CELERY_VISIBILITY_TIMEOUT: ${CELERY_VISIBILITY_TIMEOUT:-3600}
   FOXPAY_ENV: ${FOXPAY_ENV:-test}
   FOXPAY_SECRET_ENCRYPTION_KEY: ${FOXPAY_SECRET_ENCRYPTION_KEY:-change-me-to-a-separate-random-secret}
   FOXPAY_CARD_PROVIDER: ${FOXPAY_CARD_PROVIDER:-mock}
@@ -17,6 +21,7 @@ x-foxpay-environment: &foxpay-environment
   SENTRY_ENVIRONMENT: ${SENTRY_ENVIRONMENT:-docker-dev}
   SENTRY_TRACES_SAMPLE_RATE: ${SENTRY_TRACES_SAMPLE_RATE:-0.05}
   SENTRY_SEND_DEFAULT_PII: ${SENTRY_SEND_DEFAULT_PII:-0}
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
 
 services:
   db:
@@ -46,24 +51,27 @@ services:
 
   web:
     build: .
+    env_file: .env
     depends_on:
       db:
         condition: service_healthy
       redis:
         condition: service_healthy
     environment: *foxpay-environment
+    restart: unless-stopped
     ports:
       - "8000:8000"
     healthcheck:
       test:
         - CMD-SHELL
-        - python -c "import json, urllib.request; data=json.load(urllib.request.urlopen('http://127.0.0.1:8000/healthz/', timeout=5)); assert data['status'] == 'ok'"
+        - python -c "import json, urllib.request; data=json.load(urllib.request.urlopen('http://127.0.0.1:8000/readyz/', timeout=5)); assert data['status'] == 'ready'"
       interval: 30s
       timeout: 10s
       retries: 3
 
   worker:
     build: .
+    env_file: .env
     depends_on:
       db:
         condition: service_healthy
@@ -75,6 +83,7 @@ services:
 
   beat:
     build: .
+    env_file: .env
     depends_on:
       db:
         condition: service_healthy
