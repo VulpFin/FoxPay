@@ -1,4 +1,5 @@
 from django.contrib import admin
+from django.contrib.auth import views as auth_views
 from django.urls import include, path
 
 from .views import healthz, readyz
@@ -11,6 +12,18 @@ from apps.payments import paypal_partner_views
 
 
 urlpatterns = [
+    # Staff sign-in is the only password Fox Pay itself holds; everyone else's
+    # lives with their TG11 account. Naming this route admin_password_reset is
+    # what makes the admin login page offer "Forgotten your password?" on its
+    # own, so there is no dead end for the one local credential.
+    path("admin/password_reset/", auth_views.PasswordResetView.as_view(
+        extra_email_context={"site_name": "Fox Pay"}), name="admin_password_reset"),
+    path("admin/password_reset/done/", auth_views.PasswordResetDoneView.as_view(),
+         name="password_reset_done"),
+    path("admin/reset/<uidb64>/<token>/", auth_views.PasswordResetConfirmView.as_view(),
+         name="password_reset_confirm"),
+    path("admin/reset/done/", auth_views.PasswordResetCompleteView.as_view(),
+         name="password_reset_complete"),
     path("admin/", admin.site.urls),
     path("healthz/", healthz, name="healthz"),
     path("readyz/", readyz, name="readyz"),
